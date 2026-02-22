@@ -157,6 +157,8 @@ jobs:
           }
 
           docker run --rm `
+            --dns 8.8.8.8 `
+            --dns 1.1.1.1 `
             -v "${env:GITHUB_WORKSPACE}:C:\workspace" `
             -v "${containerDevRoot}:C:\dev" `
             -v "C:\Program Files\PowerShell\7:C:\Program Files\PowerShell\7" `
