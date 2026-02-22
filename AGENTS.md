@@ -20,10 +20,13 @@ This repository is the canonical policy and manifest surface for deterministic `
 ## Release Signal Contract
 - `Workspace SHA Refresh PR` is the primary path for updating `pinned_sha` values.
 - On drift, automation must update manifest pins, create/update branch `automation/sha-refresh`, and open or update a PR to `main`.
+- `workspace-sha-refresh-pr.yml` requires repository secret `WORKFLOW_BOT_TOKEN` for branch mutation, PR operations, and workflow dispatch.
+- If `WORKFLOW_BOT_TOKEN` is missing or misconfigured, refresh automation must fail fast with explicit remediation.
 - Auto-merge is enabled by default for refresh PRs using squash strategy.
 - Maintainer review is not required for `labview-cdev-surface` refresh PR merges (`required_approving_review_count = 0`).
 - Do not bypass this by weakening checks or disabling scheduled runs.
-- If automation cannot create or merge the PR, manual refresh is fallback.
+- Do not use manual no-op pushes as a normal workaround for refresh PR check propagation.
+- If automation cannot create or merge the PR due to platform outage, manual refresh is fallback.
 
 ## Installer Release Contract
 - The NSIS workspace installer is published as a GitHub release asset from `.github/workflows/release-workspace-installer.yml`.
@@ -48,8 +51,14 @@ This repository is the canonical policy and manifest surface for deterministic `
 
 ## Installer Runtime Gate Contract
 - Installer runtime (`scripts/Install-WorkspaceFromManifest.ps1`) must fail fast if bundled `runner-cli` integrity checks fail.
-- Installer runtime must enforce LabVIEW 2026 (64-bit) capability gate by executing `runner-cli ppl build` against installed `labview-icon-editor`.
-- Branch-protection-only governance failures remain audit-only; runner-cli/PPL capability failures are hard-stop failures.
+- Installer runtime must enforce LabVIEW 2020 capability gates in this order:
+  - `runner-cli ppl build` on 32-bit LabVIEW 2020.
+  - `runner-cli ppl build` on 64-bit LabVIEW 2020.
+  - `runner-cli vipc assert/apply/assert` and `runner-cli vip build` on 64-bit LabVIEW 2020.
+- Installer runtime must require `-ExecutionContext NsisInstall` (or explicit local exercise context) for authoritative post-actions in `Install` mode.
+- Installer runtime must surface phase-level terminal feedback (clone, payload sync, runner-cli validation, PPL gate, VIP harness gate, governance audit).
+- Installer runtime report must emit `ppl_capability_checks` (per bitness) and ordered `post_action_sequence` evidence.
+- Branch-protection-only governance failures remain audit-only; runner-cli/PPL/VIP capability failures are hard-stop failures.
 
 ## Post-Gate Docker Extension
 - After installer runtime gates are consistently green, add a Docker Desktop Windows-image lane that runs installer + `runner-cli ppl build` inside the LabVIEW-enabled image.

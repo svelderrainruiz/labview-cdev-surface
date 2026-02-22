@@ -28,13 +28,16 @@ Describe 'Workspace installer release workflow contract' {
     It 'defines package and publish jobs with release asset upload' {
         $script:workflowContent | Should -Match 'name:\s*Package Workspace Installer'
         $script:workflowContent | Should -Match 'name:\s*Publish GitHub Release Asset'
+        $script:workflowContent | Should -Match 'Release preflight - verify icon-editor upstream pin freshness'
+        $script:workflowContent | Should -Match 'repos/LabVIEW-Community-CI-CD/labview-icon-editor/branches/develop'
+        $script:workflowContent | Should -Match 'Manifest pin is stale'
         $script:workflowContent | Should -Match 'Build-RunnerCliBundleFromManifest\.ps1'
         $script:workflowContent | Should -Match 'Test-RunnerCliBundleDeterminism\.ps1'
         $script:workflowContent | Should -Match 'Test-WorkspaceInstallerDeterminism\.ps1'
         $script:workflowContent | Should -Match 'Write-ReleaseProvenance\.ps1'
         $script:workflowContent | Should -Match 'Test-ProvenanceContracts\.ps1'
         $script:workflowContent | Should -Match 'workspace-installer-release-\$\{\{\s*github\.run_id\s*\}\}'
-        $script:workflowContent | Should -Match '''release'',\s*''create'''
+        $script:workflowContent | Should -Match '(gh release create|''release'',\s*''create'')'
         $script:workflowContent | Should -Match 'gh release upload'
         $script:workflowContent | Should -Match '--clobber'
     }

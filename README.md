@@ -18,8 +18,10 @@ This repository owns:
 Auto-refresh policy:
 1. Auto-merge is enabled by default for refresh PRs with squash strategy.
 2. Maintainer approval is not required for `labview-cdev-surface` refresh merges (`required_approving_review_count = 0`).
-3. Required status checks remain strict (`CI Pipeline`).
-4. If automation fails due to permissions or API errors, use manual fallback PR flow.
+3. Required status checks remain strict (`CI Pipeline`, `Workspace Installer Contract`, `Reproducibility Contract`, `Provenance Contract`).
+4. `workspace-sha-refresh-pr.yml` requires repository secret `WORKFLOW_BOT_TOKEN` for branch mutation, PR operations, and workflow dispatch.
+5. If `WORKFLOW_BOT_TOKEN` is missing or misconfigured, refresh automation fails fast with an explicit error.
+6. Manual refresh PR flow is fallback only for platform outages, not routine check propagation.
 
 ## Local checks
 
@@ -46,7 +48,8 @@ pwsh -NoProfile -File .\scripts\Invoke-WorkspaceInstallerIteration.ps1 `
 ```
 
 Prerequisites for full installer qualification:
-- LabVIEW 2026 (64-bit) installed.
+- LabVIEW 2020 (32-bit and 64-bit) installed for PPL capability.
+- LabVIEW 2020 (64-bit) installed for VIP capability.
 - `g-cli`, `git`, `gh`, `pwsh`, and `dotnet` available on PATH.
 - NSIS installed at `C:\Program Files (x86)\NSIS` (or pass an override).
 
@@ -79,7 +82,10 @@ When enabled, `Workspace Installer Contract` compiles:
 - `lvie-cdev-workspace-installer.exe`
 
 The job stages a deterministic workspace payload, builds a manifest-pinned `runner-cli` bundle, and validates that NSIS build tooling can produce the installer on the self-hosted Windows lane.
-Installer runtime is a hard gate for `runner-cli ppl build` capability against LabVIEW 2026 (64-bit).
+Installer runtime is a hard gate for post-install capability in this order:
+1. `runner-cli ppl build` with LabVIEW 2020 x86.
+2. `runner-cli ppl build` with LabVIEW 2020 x64.
+3. `runner-cli vipc assert/apply/assert` and `runner-cli vip build` with LabVIEW 2020 x64.
 
 Additional supply-chain contract jobs:
 - `Reproducibility Contract`: validates bit-for-bit determinism for `runner-cli` bundles (`win-x64`, `linux-x64`) and installer output.
@@ -90,8 +96,8 @@ Additional supply-chain contract jobs:
 After the installer hard gate is consistently green, extend CI with a Docker Desktop Windows-image lane that:
 1. Installs the workspace via `lvie-cdev-workspace-installer.exe /S`.
 2. Uses bundled `runner-cli` from the installed workspace.
-3. Runs `runner-cli ppl build` on the LabVIEW-enabled Windows image.
-4. Fails the lane on command-surface regressions or PPL capability loss.
+3. Runs `runner-cli ppl build` and `runner-cli vip build` on the LabVIEW-enabled Windows image.
+4. Fails the lane on command-surface regressions or PPL/VIP capability loss.
 
 ## Fast Docker Desktop Linux iteration
 
@@ -141,4 +147,4 @@ On failure, it updates a single tracking issue (`Nightly Supply-Chain Canary Fai
 ## Windows LabVIEW image gate
 
 `windows-labview-image-gate.yml` is dispatch-only in phase 1 and targets a dedicated self-hosted Windows runner with Windows containers.  
-It pulls `nationalinstruments/labview:latest-windows`, installs the NSIS workspace installer in-container, runs bundled `runner-cli ppl build`, and verifies PPL output presence.
+It pulls `nationalinstruments/labview:latest-windows`, installs the NSIS workspace installer in-container, runs bundled `runner-cli ppl build` and `runner-cli vip build`, and verifies PPL + VIP output presence.
