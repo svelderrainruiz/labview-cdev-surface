@@ -24,6 +24,7 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:workflowContent | Should -Match 'docker pull \$env:LABVIEW_WINDOWS_IMAGE'
         $script:workflowContent | Should -Match '--dns 8\.8\.8\.8'
         $script:workflowContent | Should -Match '--dns 1\.1\.1\.1'
+        $script:workflowContent | Should -Match 'git config --global --add safe\.directory ''\*'''
         $script:workflowContent | Should -Match 'DockerCli\.exe.*-SwitchWindowsEngine'
         $script:workflowContent | Should -Match 'Install-WorkspaceFromManifest\.ps1'
         $script:workflowContent | Should -Match 'workspace-install-latest\.json'
