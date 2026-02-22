@@ -168,6 +168,10 @@ jobs:
           if (Test-Path -LiteralPath $hostInstallReportPath -PathType Leaf) {
             Copy-Item -LiteralPath $hostInstallReportPath -Destination (Join-Path $gateRoot 'workspace-install-latest.json') -Force
           }
+          $hostBootstrapLogPath = Join-Path $containerDevRoot 'artifacts\workspace-installer-bootstrap.log'
+          if (Test-Path -LiteralPath $hostBootstrapLogPath -PathType Leaf) {
+            Copy-Item -LiteralPath $hostBootstrapLogPath -Destination (Join-Path $gateRoot 'workspace-installer-bootstrap.log') -Force
+          }
           if ($dockerExitCode -ne 0) {
             throw "Windows image gate failed."
           }

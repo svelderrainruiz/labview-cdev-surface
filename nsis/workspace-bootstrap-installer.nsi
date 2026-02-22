@@ -39,7 +39,8 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File /r "${PAYLOAD_DIR}\*"
 
-  ExecWait '"pwsh" -NoProfile -File "$INSTDIR\${INSTALL_SCRIPT_REL}" -WorkspaceRoot "${WORKSPACE_ROOT}" -ManifestPath "$INSTDIR\${MANIFEST_REL}" -Mode Install -ExecutionContext NsisInstall -OutputPath "${WORKSPACE_ROOT}\${REPORT_REL}"' $0
+  CreateDirectory "${WORKSPACE_ROOT}\artifacts"
+  ExecWait '"$SYSDIR\cmd.exe" /D /C ""pwsh" -NoProfile -File "$INSTDIR\${INSTALL_SCRIPT_REL}" -WorkspaceRoot "${WORKSPACE_ROOT}" -ManifestPath "$INSTDIR\${MANIFEST_REL}" -Mode Install -ExecutionContext NsisInstall -OutputPath "${WORKSPACE_ROOT}\${REPORT_REL}" > "${WORKSPACE_ROOT}\artifacts\workspace-installer-bootstrap.log" 2>&1""' $0
   ${If} $0 != 0
     SetErrorLevel $0
     Abort
