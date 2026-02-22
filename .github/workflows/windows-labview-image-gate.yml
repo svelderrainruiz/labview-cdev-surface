@@ -76,6 +76,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
             throw "Installer missing for gate: $installerPath"
           }
+          $containerDevRoot = Join-Path $env:RUNNER_TEMP 'windows-image-gate-dev'
+          if (Test-Path -LiteralPath $containerDevRoot -PathType Container) {
+            Remove-Item -LiteralPath $containerDevRoot -Recurse -Force
+          }
+          New-Item -Path $containerDevRoot -ItemType Directory -Force | Out-Null
 
           $containerCmd = @'
           $ErrorActionPreference = "Stop"
@@ -94,18 +99,22 @@ jobs:
             throw "Installer process failed to start."
           }
           $installerExitCode = [int]$installerProcess.ExitCode
-          if ($installerExitCode -ne 0) {
-            throw "Installer failed with exit code $installerExitCode"
-          }
 
-          $reportDeadline = (Get-Date).AddMinutes(2)
+          $reportDeadline = (Get-Date).AddMinutes(4)
           while (-not (Test-Path -LiteralPath $installReportPath -PathType Leaf)) {
             if ((Get-Date) -gt $reportDeadline) {
+              if ($installerExitCode -ne 0) {
+                throw "Installer exited with code $installerExitCode and report is missing: $installReportPath"
+              }
               throw "Installer report missing after timeout: $installReportPath"
             }
             Start-Sleep -Seconds 5
           }
           $installReport = Get-Content -LiteralPath $installReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          if ($installerExitCode -ne 0) {
+            $reportErrors = [string]::Join('; ', @($installReport.errors))
+            throw "Installer exited with code $installerExitCode. report_status=$([string]$installReport.status). errors=$reportErrors"
+          }
           if ([string]$installReport.status -ne "succeeded") {
             throw "Installer report status is not succeeded: $([string]$installReport.status)"
           }
@@ -124,6 +133,7 @@ jobs:
 
           [ordered]@{
             status = "pass"
+            installer_exit_code = $installerExitCode
             install_report = $installReportPath
             ppl_32_status = $ppl32
             ppl_64_status = $ppl64
@@ -146,17 +156,24 @@ jobs:
 
           docker run --rm `
             -v "${env:GITHUB_WORKSPACE}:C:\workspace" `
+            -v "${containerDevRoot}:C:\dev" `
             -v "C:\Program Files\PowerShell\7:C:\Program Files\PowerShell\7" `
             -v "C:\Program Files\Git:C:\Program Files\Git" `
             -v "C:\Program Files\GitHub CLI:C:\Program Files\GitHub CLI" `
             -v "C:\Program Files\G-CLI:C:\Program Files\G-CLI" `
             nationalinstruments/labview:latest-windows `
             powershell -NoProfile -Command $containerCmd
-          if ($LASTEXITCODE -ne 0) {
+          $dockerExitCode = $LASTEXITCODE
+          $hostInstallReportPath = Join-Path $containerDevRoot 'artifacts\workspace-install-latest.json'
+          if (Test-Path -LiteralPath $hostInstallReportPath -PathType Leaf) {
+            Copy-Item -LiteralPath $hostInstallReportPath -Destination (Join-Path $gateRoot 'workspace-install-latest.json') -Force
+          }
+          if ($dockerExitCode -ne 0) {
             throw "Windows image gate failed."
           }
 
       - name: Upload windows image gate artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-labview-image-gate-${{ github.run_id }}
