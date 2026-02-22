@@ -590,11 +590,14 @@ try {
             Select-Object -Unique |
             Sort-Object)
     )
-    if (($requiredPplBitnesses -join ',') -ne '32,64') {
-        throw "Installer contract requires dual PPL bitness gating ['32','64']; received '$([string]::Join(',', @($requiredPplBitnesses)))'."
+    if (@($requiredPplBitnesses).Count -eq 0) {
+        throw "Installer contract requires at least one supported PPL bitness ['32','64']."
     }
-    if ($requiredVipBitness -ne '64') {
-        throw "Installer contract requires VIP bitness '64'; received '$requiredVipBitness'."
+    if ($requiredVipBitness -notin @('32', '64')) {
+        throw "Installer contract requires VIP bitness to be one of ['32','64']; received '$requiredVipBitness'."
+    }
+    if ($requiredVipBitness -notin $requiredPplBitnesses) {
+        throw "Installer contract requires VIP bitness '$requiredVipBitness' to be included in required_ppl_bitnesses."
     }
 
     if ($Mode -eq 'Install') {

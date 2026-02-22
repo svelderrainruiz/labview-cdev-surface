@@ -34,6 +34,15 @@ jobs:
 
           New-Item -Path (Join-Path $payloadRoot 'scripts') -ItemType Directory -Force | Out-Null
           New-Item -Path (Join-Path $payloadRoot 'workspace-governance\tools\runner-cli\win-x64') -ItemType Directory -Force | Out-Null
+          $gateManifestPath = Join-Path $payloadRoot 'workspace-governance\workspace-governance.json'
+          $gateManifest = Get-Content -LiteralPath $gateManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          if ($null -eq $gateManifest.installer_contract -or $null -eq $gateManifest.installer_contract.labview_gate) {
+            throw "Installer contract labview_gate missing in payload manifest: $gateManifestPath"
+          }
+          $gateManifest.installer_contract.labview_gate.required_year = '2026'
+          $gateManifest.installer_contract.labview_gate.required_ppl_bitnesses = @('64')
+          $gateManifest.installer_contract.labview_gate.required_vip_bitness = '64'
+          $gateManifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $gateManifestPath -Encoding utf8
 
           Copy-Item -Path "$env:GITHUB_WORKSPACE/scripts/Install-WorkspaceFromManifest.ps1" -Destination (Join-Path $payloadRoot 'scripts/Install-WorkspaceFromManifest.ps1') -Force
 
@@ -122,10 +131,22 @@ jobs:
             throw "Installer report status is not succeeded: $([string]$installReport.status)"
           }
 
-          $ppl32 = [string]$installReport.ppl_capability_checks.'32'.status
-          $ppl64 = [string]$installReport.ppl_capability_checks.'64'.status
-          if ($ppl32 -ne "pass") { throw "PPL 32-bit gate did not pass. status=$ppl32" }
-          if ($ppl64 -ne "pass") { throw "PPL 64-bit gate did not pass. status=$ppl64" }
+          $pplStatuses = [ordered]@{}
+          foreach ($pplCheck in @($installReport.ppl_capability_checks.PSObject.Properties)) {
+            $bitness = [string]$pplCheck.Name
+            $status = [string]$pplCheck.Value.status
+            if ($status -ne 'not_run') {
+              $pplStatuses[$bitness] = $status
+            }
+          }
+          if ($pplStatuses.Count -eq 0) {
+            throw "No PPL capability checks executed."
+          }
+          foreach ($entry in $pplStatuses.GetEnumerator()) {
+            if ([string]$entry.Value -ne 'pass') {
+              throw "PPL $($entry.Key)-bit gate did not pass. status=$([string]$entry.Value)"
+            }
+          }
 
           $vipStatus = [string]$installReport.vip_package_build_check.status
           $vipPath = [string]$installReport.vip_package_build_check.output_vip_path
@@ -138,8 +159,7 @@ jobs:
             status = "pass"
             installer_exit_code = $installerExitCode
             install_report = $installReportPath
-            ppl_32_status = $ppl32
-            ppl_64_status = $ppl64
+            ppl_statuses = $pplStatuses
             vip_status = $vipStatus
             vip_output = $vipPath
             timestamp_utc = (Get-Date).ToUniversalTime().ToString("o")

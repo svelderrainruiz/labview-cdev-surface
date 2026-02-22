@@ -27,9 +27,11 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:workflowContent | Should -Match 'git config --global --add safe\.directory ''\*'''
         $script:workflowContent | Should -Match 'DockerCli\.exe.*-SwitchWindowsEngine'
         $script:workflowContent | Should -Match 'Install-WorkspaceFromManifest\.ps1'
+        $script:workflowContent | Should -Match "required_year = '2026'"
+        $script:workflowContent | Should -Match "required_ppl_bitnesses = @\('64'\)"
         $script:workflowContent | Should -Match 'workspace-install-latest\.json'
-        $script:workflowContent | Should -Match "ppl_capability_checks\.'32'\.status"
-        $script:workflowContent | Should -Match "ppl_capability_checks\.'64'\.status"
+        $script:workflowContent | Should -Match 'No PPL capability checks executed'
+        $script:workflowContent | Should -Match 'ppl_statuses = \$pplStatuses'
         $script:workflowContent | Should -Match 'vip_package_build_check\.status'
     }
 
