@@ -96,11 +96,13 @@ jobs:
           $containerCmd = @'
           $ErrorActionPreference = "Stop"
           $env:PATH = "C:\Program Files\PowerShell\7;C:\Program Files\Git\cmd;C:\Program Files\Git\mingw64\bin;C:\Program Files\GitHub CLI;C:\Program Files\G-CLI\bin;$env:PATH"
+          $env:LVIE_INSTALLER_CONTAINER_MODE = "1"
           git config --global --add safe.directory '*'
           $installReportPath = "C:\dev\artifacts\workspace-install-latest.json"
           if (Test-Path -LiteralPath $installReportPath -PathType Leaf) {
             Remove-Item -LiteralPath $installReportPath -Force
           }
+          Unblock-File -LiteralPath "C:\workspace\artifacts\windows-image-gate\lvie-cdev-workspace-installer.exe" -ErrorAction SilentlyContinue
 
           $installerProcess = Start-Process `
             -FilePath "C:\workspace\artifacts\windows-image-gate\lvie-cdev-workspace-installer.exe" `
