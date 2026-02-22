@@ -79,6 +79,7 @@ jobs:
 
           $containerCmd = @'
           $ErrorActionPreference = "Stop"
+          $env:PATH = "C:\Program Files\PowerShell\7;C:\Program Files\Git\cmd;C:\Program Files\Git\mingw64\bin;C:\Program Files\GitHub CLI;C:\Program Files\G-CLI\bin;$env:PATH"
           $installReportPath = "C:\dev\artifacts\workspace-install-latest.json"
           if (Test-Path -LiteralPath $installReportPath -PathType Leaf) {
             Remove-Item -LiteralPath $installReportPath -Force
@@ -125,8 +126,23 @@ jobs:
           } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "C:\workspace\artifacts\windows-image-gate\windows-image-gate-report.json" -Encoding utf8
           '@
 
+          foreach ($toolPath in @(
+            'C:\Program Files\PowerShell\7',
+            'C:\Program Files\Git',
+            'C:\Program Files\GitHub CLI',
+            'C:\Program Files\G-CLI'
+          )) {
+            if (-not (Test-Path -LiteralPath $toolPath -PathType Container)) {
+              throw "Required host tool path missing for Windows container gate: $toolPath"
+            }
+          }
+
           docker run --rm `
             -v "${env:GITHUB_WORKSPACE}:C:\workspace" `
+            -v "C:\Program Files\PowerShell\7:C:\Program Files\PowerShell\7" `
+            -v "C:\Program Files\Git:C:\Program Files\Git" `
+            -v "C:\Program Files\GitHub CLI:C:\Program Files\GitHub CLI" `
+            -v "C:\Program Files\G-CLI:C:\Program Files\G-CLI" `
             nationalinstruments/labview:latest-windows `
             powershell -NoProfile -Command $containerCmd
           if ($LASTEXITCODE -ne 0) {
