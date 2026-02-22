@@ -561,22 +561,22 @@ try {
         $installerContract = $manifest.installer_contract
         if ($null -ne $installerContract.PSObject.Properties['labview_gate']) {
             $labviewGate = $installerContract.labview_gate
-            if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_year)) {
+            if (($null -ne $labviewGate.PSObject.Properties['required_year']) -and -not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_year)) {
                 $requiredLabviewYear = [string]$labviewGate.required_year
             }
             if ($null -ne $labviewGate.PSObject.Properties['required_ppl_bitnesses']) {
                 $requiredPplBitnesses = @($labviewGate.required_ppl_bitnesses)
             }
-            if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_vip_bitness)) {
+            if (($null -ne $labviewGate.PSObject.Properties['required_vip_bitness']) -and -not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_vip_bitness)) {
                 $requiredVipBitness = [string]$labviewGate.required_vip_bitness
             }
-            if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_bitness)) {
+            if (($null -ne $labviewGate.PSObject.Properties['required_bitness']) -and -not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_bitness)) {
                 $requiredVipBitness = [string]$labviewGate.required_bitness
             }
         }
         if ($null -ne $installerContract.PSObject.Properties['runner_cli_bundle']) {
             $runnerCliBundleContract = $installerContract.runner_cli_bundle
-            if (-not [string]::IsNullOrWhiteSpace([string]$runnerCliBundleContract.relative_root)) {
+            if (($null -ne $runnerCliBundleContract.PSObject.Properties['relative_root']) -and -not [string]::IsNullOrWhiteSpace([string]$runnerCliBundleContract.relative_root)) {
                 $runnerCliRelativeRoot = [string]$runnerCliBundleContract.relative_root
             }
         }
