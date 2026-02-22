@@ -79,12 +79,23 @@ jobs:
 
           $containerCmd = @'
           $ErrorActionPreference = "Stop"
-          & "C:\workspace\artifacts\windows-image-gate\lvie-cdev-workspace-installer.exe" /S
-          if ($LASTEXITCODE -ne 0) { throw "Installer failed with exit code $LASTEXITCODE" }
-
           $installReportPath = "C:\dev\artifacts\workspace-install-latest.json"
-          if (-not (Test-Path -LiteralPath $installReportPath -PathType Leaf)) {
-            throw "Installer report missing: $installReportPath"
+          if (Test-Path -LiteralPath $installReportPath -PathType Leaf) {
+            Remove-Item -LiteralPath $installReportPath -Force
+          }
+
+          & "C:\workspace\artifacts\windows-image-gate\lvie-cdev-workspace-installer.exe" /S
+          $installerExitCode = $LASTEXITCODE
+          if (($null -ne $installerExitCode) -and ($installerExitCode -ne 0)) {
+            throw "Installer failed with exit code $installerExitCode"
+          }
+
+          $reportDeadline = (Get-Date).AddMinutes(10)
+          while (-not (Test-Path -LiteralPath $installReportPath -PathType Leaf)) {
+            if ((Get-Date) -gt $reportDeadline) {
+              throw "Installer report missing after timeout: $installReportPath"
+            }
+            Start-Sleep -Seconds 5
           }
           $installReport = Get-Content -LiteralPath $installReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
           if ([string]$installReport.status -ne "succeeded") {
