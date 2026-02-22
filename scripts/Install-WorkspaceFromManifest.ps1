@@ -310,6 +310,17 @@ function Unblock-ExecutableForAutomation {
     return [pscustomobject]$result
 }
 
+function Set-RunnerCliPreflightEnvironment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RunnerCliPath
+    )
+
+    $env:LVIE_RUNNER_CLI_PATH = $RunnerCliPath
+    $env:LVIE_RUNNER_CLI_SKIP_BUILD = '1'
+    $env:LVIE_RUNNER_CLI_SKIP_DOWNLOAD = '1'
+}
+
 function Invoke-RunnerCliPplCapabilityCheck {
     param(
         [Parameter(Mandatory = $true)]
@@ -378,6 +389,7 @@ function Invoke-RunnerCliPplCapabilityCheck {
         )
         $result.command = @($commandArgs)
 
+        Set-RunnerCliPreflightEnvironment -RunnerCliPath $RunnerCliPath
         $commandOutput = & $RunnerCliPath @commandArgs 2>&1
         $result.command_output = @($commandOutput | ForEach-Object { [string]$_ })
         $result.exit_code = $LASTEXITCODE
@@ -511,6 +523,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         )
         $result.command.vipc_assert = @($vipcAssertArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vipc assert.'
+        Set-RunnerCliPreflightEnvironment -RunnerCliPath $RunnerCliPath
         & $RunnerCliPath @vipcAssertArgs
         $vipcAssertExit = $LASTEXITCODE
         if ($vipcAssertExit -ne 0) {
