@@ -193,6 +193,7 @@ function Invoke-RunnerCliPplCapabilityCheck {
         output_ppl_path = Join-Path $IconEditorRepoPath 'resource\plugins\lv_icon.lvlibp'
         output_ppl_snapshot_path = Join-Path $statusRoot ("workspace-installer-ppl-{0}.lvlibp" -f $RequiredBitness)
         command = @()
+        command_output = @()
         exit_code = $null
         labview_install_root = ''
     }
@@ -230,10 +231,12 @@ function Invoke-RunnerCliPplCapabilityCheck {
         )
         $result.command = @($commandArgs)
 
-        & $RunnerCliPath @commandArgs
+        $commandOutput = & $RunnerCliPath @commandArgs 2>&1
+        $result.command_output = @($commandOutput | ForEach-Object { [string]$_ })
         $result.exit_code = $LASTEXITCODE
         if ($result.exit_code -ne 0) {
-            throw "runner-cli ppl build failed with exit code $($result.exit_code)."
+            $outputSummary = [string]::Join(' | ', @($result.command_output | Select-Object -First 20))
+            throw "runner-cli ppl build failed with exit code $($result.exit_code). Output: $outputSummary"
         }
 
         if (-not (Test-Path -LiteralPath $result.output_ppl_path -PathType Leaf)) {
