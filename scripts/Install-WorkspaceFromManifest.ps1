@@ -58,6 +58,7 @@ function Write-InstallerFeedback {
 function Add-PostActionSequenceEntry {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.ArrayList]$Sequence,
         [Parameter(Mandatory = $true)]
         [string]$Phase,
