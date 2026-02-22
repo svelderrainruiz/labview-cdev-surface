@@ -17,7 +17,7 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match '\[string\]\$WorkspaceRoot = ''C:\\dev'''
         $script:scriptContent | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s*\[string\]\$ManifestPath'
         $script:scriptContent | Should -Match '\[ValidateSet\(''Install'', ''Verify''\)\]'
-        $script:scriptContent | Should -Match '\$ExecutionContext = '''''
+        $script:scriptContent | Should -Match '\[Alias\(''ExecutionContext''\)\]\s*\[string\]\$InstallExecutionContext = '''''
         $script:scriptContent | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s*\[string\]\$OutputPath'
     }
 

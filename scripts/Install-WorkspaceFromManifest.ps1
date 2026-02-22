@@ -12,7 +12,8 @@ param(
     [string]$Mode = 'Install',
 
     [Parameter()]
-    [string]$ExecutionContext = '',
+    [Alias('ExecutionContext')]
+    [string]$InstallExecutionContext = '',
 
     [Parameter(Mandatory = $true)]
     [string]$OutputPath
@@ -596,11 +597,11 @@ try {
     }
 
     if ($Mode -eq 'Install') {
-        if ([string]::IsNullOrWhiteSpace($ExecutionContext)) {
+        if ([string]::IsNullOrWhiteSpace($InstallExecutionContext)) {
             throw "Install mode requires -ExecutionContext NsisInstall (or LocalInstallerExercise)."
         }
-        if ($ExecutionContext -notin @('NsisInstall', 'LocalInstallerExercise')) {
-            throw "Unsupported execution context '$ExecutionContext'. Expected NsisInstall or LocalInstallerExercise."
+        if ($InstallExecutionContext -notin @('NsisInstall', 'LocalInstallerExercise')) {
+            throw "Unsupported execution context '$InstallExecutionContext'. Expected NsisInstall or LocalInstallerExercise."
         }
     }
 
@@ -1083,7 +1084,7 @@ $report = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     status = $status
     mode = $Mode
-    execution_context = $ExecutionContext
+    execution_context = $InstallExecutionContext
     workspace_root = $resolvedWorkspaceRoot
     manifest_path = $resolvedManifestPath
     output_path = $resolvedOutputPath

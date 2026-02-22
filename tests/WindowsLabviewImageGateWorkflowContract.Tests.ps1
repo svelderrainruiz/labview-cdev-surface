@@ -20,7 +20,8 @@ Describe 'Windows LabVIEW image gate workflow contract' {
     }
 
     It 'targets windows containers with installer-post-action report checks' {
-        $script:workflowContent | Should -Match 'nationalinstruments/labview:latest-windows'
+        $script:workflowContent | Should -Match 'LABVIEW_WINDOWS_IMAGE:\s*nationalinstruments/labview@sha256:[0-9a-f]{64}'
+        $script:workflowContent | Should -Match 'docker pull \$env:LABVIEW_WINDOWS_IMAGE'
         $script:workflowContent | Should -Match 'DockerCli\.exe.*-SwitchWindowsEngine'
         $script:workflowContent | Should -Match 'Install-WorkspaceFromManifest\.ps1'
         $script:workflowContent | Should -Match 'workspace-install-latest\.json'
