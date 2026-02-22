@@ -169,7 +169,7 @@ function Get-LatestVipPath {
 function Get-IsContainerExecution {
     param(
         [Parameter()]
-        [string]$ExecutionContext = ''
+        [string]$InstallerExecutionContext = ''
     )
 
     $containerModeFlag = [string]$env:LVIE_INSTALLER_CONTAINER_MODE
@@ -182,7 +182,7 @@ function Get-IsContainerExecution {
         return $true
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($ExecutionContext) -and $ExecutionContext -match '(?i)container') {
+    if (-not [string]::IsNullOrWhiteSpace($InstallerExecutionContext) -and $InstallerExecutionContext -match '(?i)container') {
         return $true
     }
 
@@ -1037,7 +1037,7 @@ try {
     $iconEditorRepoPath = if ($null -ne $iconEditorRepoEntry) { [string]$iconEditorRepoEntry.path } else { '' }
     $iconEditorPinnedSha = if ($null -ne $iconEditorRepoEntry) { ([string]$iconEditorRepoEntry.pinned_sha).ToLowerInvariant() } else { '' }
 
-    $labviewVersionResolution.is_container_execution = Get-IsContainerExecution -ExecutionContext $InstallExecutionContext
+    $labviewVersionResolution.is_container_execution = Get-IsContainerExecution -InstallerExecutionContext $InstallExecutionContext
     $labviewVersionResolution.execution_labview_year = [string]$requiredLabviewYear
     $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
     if (-not [string]::IsNullOrWhiteSpace($iconEditorRepoPath)) {
