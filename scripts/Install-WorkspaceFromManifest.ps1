@@ -313,12 +313,17 @@ function Unblock-ExecutableForAutomation {
 function Set-RunnerCliPreflightEnvironment {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$RunnerCliPath
+        [string]$RunnerCliPath,
+        [Parameter()]
+        [string]$WorktreeRoot = ''
     )
 
     $env:LVIE_RUNNER_CLI_PATH = $RunnerCliPath
     $env:LVIE_RUNNER_CLI_SKIP_BUILD = '1'
     $env:LVIE_RUNNER_CLI_SKIP_DOWNLOAD = '1'
+    if (-not [string]::IsNullOrWhiteSpace($WorktreeRoot)) {
+        $env:LVIE_WORKTREE_ROOT = $WorktreeRoot
+    }
 }
 
 function Invoke-RunnerCliPplCapabilityCheck {
@@ -385,11 +390,14 @@ function Invoke-RunnerCliPplCapabilityCheck {
             '--minor', '0',
             '--patch', '0',
             '--build', '1',
-            '--commit', $commitArg
+            '--commit', $commitArg,
+            '--skip-worktree-root-check'
         )
         $result.command = @($commandArgs)
 
-        Set-RunnerCliPreflightEnvironment -RunnerCliPath $RunnerCliPath
+        Set-RunnerCliPreflightEnvironment `
+            -RunnerCliPath $RunnerCliPath `
+            -WorktreeRoot (Split-Path -Parent $IconEditorRepoPath)
         $commandOutput = & $RunnerCliPath @commandArgs 2>&1
         $result.command_output = @($commandOutput | ForEach-Object { [string]$_ })
         $result.exit_code = $LASTEXITCODE
@@ -523,7 +531,9 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         )
         $result.command.vipc_assert = @($vipcAssertArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vipc assert.'
-        Set-RunnerCliPreflightEnvironment -RunnerCliPath $RunnerCliPath
+        Set-RunnerCliPreflightEnvironment `
+            -RunnerCliPath $RunnerCliPath `
+            -WorktreeRoot (Split-Path -Parent $IconEditorRepoPath)
         & $RunnerCliPath @vipcAssertArgs
         $vipcAssertExit = $LASTEXITCODE
         if ($vipcAssertExit -ne 0) {
@@ -532,7 +542,8 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
                 '--repo-root', $IconEditorRepoPath,
                 '--supported-bitness', $RequiredBitness,
                 '--vipc-path', $vipcPath,
-                '--labview-version', $RunnerCliLabviewVersion
+                '--labview-version', $RunnerCliLabviewVersion,
+                '--skip-worktree-root-check'
             )
             $result.command.vipc_apply = @($vipcApplyArgs)
             Write-InstallerFeedback -Message 'VIPC assert reported dependency drift; applying VIPC dependencies.'
@@ -564,7 +575,8 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             '--release-notes-file', $releaseNotesPath,
             '--display-information-json-path', $displayInfoPath,
             '--status-path', $vipBuildStatusPath,
-            '--vipm-timeout-seconds', '1200'
+            '--vipm-timeout-seconds', '1200',
+            '--skip-worktree-root-check'
         )
         $result.command.vip_build = @($vipBuildArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vip build.'
