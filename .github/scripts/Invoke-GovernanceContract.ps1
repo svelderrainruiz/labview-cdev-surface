@@ -34,7 +34,7 @@ $requiredContexts = @(
 $endpoint = "repos/$RepoSlug/branches/$([uri]::EscapeDataString($Branch))/protection"
 $response = & gh api $endpoint 2>&1
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to read branch protection for $RepoSlug:$Branch. $([string]::Join([Environment]::NewLine, @($response)))"
+    throw "Failed to read branch protection for ${RepoSlug}:$Branch. $([string]::Join([Environment]::NewLine, @($response)))"
 }
 
 $protection = $response | ConvertFrom-Json -ErrorAction Stop
@@ -72,6 +72,6 @@ if ($issues.Count -gt 0) {
     exit 1
 }
 
-Write-Host "Governance contract satisfied for $RepoSlug:$Branch"
+Write-Host "Governance contract satisfied for ${RepoSlug}:$Branch"
 exit 0
 
