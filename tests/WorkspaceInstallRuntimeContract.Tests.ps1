@@ -41,6 +41,8 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match '\.lvcontainer'
         $script:scriptContent | Should -Match 'Get-LabVIEWSourceVersionFromRepo'
         $script:scriptContent | Should -Match 'runner_cli_labview_version'
+        $script:scriptContent | Should -Match '\.lvversion is ignored in container execution'
+        $script:scriptContent | Should -Match 'source_contract=.lvcontainer'
         $script:scriptContent | Should -Match 'LVIE_INSTALLER_CONTAINER_MODE'
         $script:scriptContent | Should -Match 'LVIE_SKIP_VIP_HARNESS'
         $script:scriptContent | Should -Match 'Unblock-ExecutableForAutomation'

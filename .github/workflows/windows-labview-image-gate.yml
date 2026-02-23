@@ -2,6 +2,12 @@ name: windows-labview-image-gate
 
 on:
   workflow_dispatch:
+    inputs:
+      labview_windows_image:
+        description: Windows LabVIEW container image reference (digest recommended)
+        required: false
+        type: string
+        default: nationalinstruments/labview@sha256:57c453dabd2ff0185ce718d88704921bb82eb83189f4049205ed9b4da7df7bcd
 
 permissions:
   contents: read
@@ -11,7 +17,7 @@ jobs:
     name: Windows LabVIEW Image Gate
     runs-on: [self-hosted, windows, self-hosted-windows-lv, windows-containers]
     env:
-      LABVIEW_WINDOWS_IMAGE: nationalinstruments/labview@sha256:57c453dabd2ff0185ce718d88704921bb82eb83189f4049205ed9b4da7df7bcd
+      LABVIEW_WINDOWS_IMAGE: ${{ inputs.labview_windows_image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

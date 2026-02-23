@@ -15,12 +15,14 @@ Describe 'Linux LabVIEW image gate workflow contract' {
 
     It 'is manual-dispatch only' {
         $script:workflowContent | Should -Match 'workflow_dispatch:'
+        $script:workflowContent | Should -Match 'labview_linux_image:'
+        $script:workflowContent | Should -Match 'default:\s*nationalinstruments/labview:[0-9]{4}q[0-9]+-linux'
         $script:workflowContent | Should -Not -Match '(?m)^\s*push:'
         $script:workflowContent | Should -Not -Match '(?m)^\s*pull_request:'
     }
 
     It 'uses a single LabVIEW linux image and desktop-linux docker context' {
-        $script:workflowContent | Should -Match 'LABVIEW_LINUX_IMAGE:\s*nationalinstruments/labview:[0-9]{4}q[0-9]+-linux'
+        $script:workflowContent | Should -Match 'LABVIEW_LINUX_IMAGE:\s*\$\{\{\s*inputs\.labview_linux_image\s*\}\}'
         $script:workflowContent | Should -Match 'Invoke-DockerDesktopLinuxIteration\.ps1'
         $script:workflowContent | Should -Match '-Image \$env:LABVIEW_LINUX_IMAGE'
         $script:workflowContent | Should -Match "-DockerContext 'desktop-linux'"

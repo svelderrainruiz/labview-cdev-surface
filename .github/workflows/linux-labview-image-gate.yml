@@ -2,6 +2,12 @@ name: linux-labview-image-gate
 
 on:
   workflow_dispatch:
+    inputs:
+      labview_linux_image:
+        description: Linux LabVIEW container image reference
+        required: false
+        type: string
+        default: nationalinstruments/labview:2026q1-linux
 
 permissions:
   contents: read
@@ -11,7 +17,7 @@ jobs:
     name: Linux LabVIEW Image Gate
     runs-on: [self-hosted, windows, self-hosted-windows-lv]
     env:
-      LABVIEW_LINUX_IMAGE: nationalinstruments/labview:2026q1-linux
+      LABVIEW_LINUX_IMAGE: ${{ inputs.labview_linux_image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

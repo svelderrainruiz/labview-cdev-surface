@@ -1070,28 +1070,40 @@ try {
     $labviewVersionResolution.execution_labview_year = [string]$requiredLabviewYear
     $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
     if (-not [string]::IsNullOrWhiteSpace($iconEditorRepoPath)) {
-        $sourceVersionRaw = Get-LabVIEWSourceVersionFromRepo -RepoRoot $iconEditorRepoPath
-        if (-not [string]::IsNullOrWhiteSpace($sourceVersionRaw)) {
-            $runnerCliLabviewVersion = [string]$sourceVersionRaw
-            $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
-            $labviewVersionResolution.message = "runner-cli source LabVIEW version resolved from .lvversion: '$runnerCliLabviewVersion'."
-        } else {
-            $warnings += "LabVIEW source version file '.lvversion' was not found at '$iconEditorRepoPath'; runner-cli will use execution year '$requiredLabviewYear' as source version."
-        }
-    }
+        if ($labviewVersionResolution.is_container_execution) {
+            $containerContract = Get-LabVIEWContainerExecutionContract -RepoRoot $iconEditorRepoPath
+            $labviewVersionResolution.lvcontainer_path = [string]$containerContract.contract_path
+            $labviewVersionResolution.lvcontainer_raw = [string]$containerContract.raw
 
-    if ($labviewVersionResolution.is_container_execution -and -not [string]::IsNullOrWhiteSpace($iconEditorRepoPath)) {
-        $containerContract = Get-LabVIEWContainerExecutionContract -RepoRoot $iconEditorRepoPath
-        $labviewVersionResolution.lvcontainer_path = [string]$containerContract.contract_path
-        $labviewVersionResolution.lvcontainer_raw = [string]$containerContract.raw
-        if ([string]$containerContract.status -eq 'resolved') {
-            $requiredLabviewYear = [string]$containerContract.execution_year
-            $labviewVersionResolution.execution_labview_year = [string]$requiredLabviewYear
-            $labviewVersionResolution.message = "Container execution uses .lvcontainer execution year '$requiredLabviewYear' with runner-cli source version '$runnerCliLabviewVersion'."
-            Write-InstallerFeedback -Message ("Container LabVIEW contract resolved: execution_year={0}; source_version={1}; tag={2}" -f $requiredLabviewYear, $runnerCliLabviewVersion, [string]$containerContract.raw)
+            if ([string]$containerContract.status -eq 'resolved') {
+                $requiredLabviewYear = [string]$containerContract.execution_year
+                $runnerCliLabviewVersion = [string]$containerContract.execution_year
+                $labviewVersionResolution.execution_labview_year = [string]$requiredLabviewYear
+                $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+                $labviewVersionResolution.message = "Container execution resolved execution and runner-cli source version from .lvcontainer: '$([string]$containerContract.raw)' => '$requiredLabviewYear'. .lvversion is ignored in container execution."
+                Write-InstallerFeedback -Message ("Container LabVIEW contract resolved from .lvcontainer: execution_year={0}; source_version={1}; tag={2}; source_contract=.lvcontainer" -f $requiredLabviewYear, $runnerCliLabviewVersion, [string]$containerContract.raw)
+            } else {
+                $warnings += "Container execution detected but .lvcontainer could not resolve an execution year. $([string]$containerContract.message)"
+                Write-InstallerFeedback -Message ("Container LabVIEW contract warning: {0}" -f [string]$containerContract.message)
+
+                $sourceVersionRaw = Get-LabVIEWSourceVersionFromRepo -RepoRoot $iconEditorRepoPath
+                if (-not [string]::IsNullOrWhiteSpace($sourceVersionRaw)) {
+                    $runnerCliLabviewVersion = [string]$sourceVersionRaw
+                    $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+                    $warnings += "Container execution fell back to '.lvversion' source contract because .lvcontainer was unresolved."
+                } else {
+                    $warnings += "LabVIEW source version file '.lvversion' was not found at '$iconEditorRepoPath'; runner-cli will use execution year '$requiredLabviewYear' as source version."
+                }
+            }
         } else {
-            $warnings += "Container execution detected but .lvcontainer could not resolve an execution year. $([string]$containerContract.message)"
-            Write-InstallerFeedback -Message ("Container LabVIEW contract warning: {0}" -f [string]$containerContract.message)
+            $sourceVersionRaw = Get-LabVIEWSourceVersionFromRepo -RepoRoot $iconEditorRepoPath
+            if (-not [string]::IsNullOrWhiteSpace($sourceVersionRaw)) {
+                $runnerCliLabviewVersion = [string]$sourceVersionRaw
+                $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+                $labviewVersionResolution.message = "runner-cli source LabVIEW version resolved from .lvversion: '$runnerCliLabviewVersion'."
+            } else {
+                $warnings += "LabVIEW source version file '.lvversion' was not found at '$iconEditorRepoPath'; runner-cli will use execution year '$requiredLabviewYear' as source version."
+            }
         }
     }
 
