@@ -16,6 +16,8 @@ Describe 'Workspace surface contract' {
         $script:installScriptPath = Join-Path $script:repoRoot 'scripts/Install-WorkspaceFromManifest.ps1'
         $script:buildInstallerScriptPath = Join-Path $script:repoRoot 'scripts/Build-WorkspaceBootstrapInstaller.ps1'
         $script:bundleRunnerCliScriptPath = Join-Path $script:repoRoot 'scripts/Build-RunnerCliBundleFromManifest.ps1'
+        $script:harnessRunnerBaselineScriptPath = Join-Path $script:repoRoot 'scripts/Assert-InstallerHarnessRunnerBaseline.ps1'
+        $script:harnessMachinePreflightScriptPath = Join-Path $script:repoRoot 'scripts/Assert-InstallerHarnessMachinePreflight.ps1'
         $script:runnerCliDeterminismScriptPath = Join-Path $script:repoRoot 'scripts/Test-RunnerCliBundleDeterminism.ps1'
         $script:installerDeterminismScriptPath = Join-Path $script:repoRoot 'scripts/Test-WorkspaceInstallerDeterminism.ps1'
         $script:writeProvenanceScriptPath = Join-Path $script:repoRoot 'scripts/Write-ReleaseProvenance.ps1'
@@ -26,6 +28,8 @@ Describe 'Workspace surface contract' {
         $script:driftWorkflowPath = Join-Path $script:repoRoot '.github/workflows/workspace-sha-drift-signal.yml'
         $script:shaRefreshWorkflowPath = Join-Path $script:repoRoot '.github/workflows/workspace-sha-refresh-pr.yml'
         $script:releaseWorkflowPath = Join-Path $script:repoRoot '.github/workflows/release-workspace-installer.yml'
+        $script:integrationGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/integration-gate.yml'
+        $script:installerHarnessWorkflowPath = Join-Path $script:repoRoot '.github/workflows/installer-harness-self-hosted.yml'
         $script:releaseCoreWorkflowPath = Join-Path $script:repoRoot '.github/workflows/_release-workspace-installer-core.yml'
         $script:releaseWithGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/release-with-windows-gate.yml'
         $script:canaryWorkflowPath = Join-Path $script:repoRoot '.github/workflows/nightly-supplychain-canary.yml'
@@ -36,6 +40,12 @@ Describe 'Workspace surface contract' {
         $script:payloadManifestPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/workspace-governance.json'
         $script:payloadAssertScriptPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/scripts/Assert-WorkspaceGovernance.ps1'
         $script:payloadPolicyScriptPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/scripts/Test-PolicyContracts.ps1'
+        $script:payloadCliRoot = Join-Path $script:repoRoot 'workspace-governance-payload/tools/cdev-cli'
+        $script:payloadCliWinAssetPath = Join-Path $script:payloadCliRoot 'cdev-cli-win-x64.zip'
+        $script:payloadCliWinShaPath = Join-Path $script:payloadCliRoot 'cdev-cli-win-x64.zip.sha256'
+        $script:payloadCliLinuxAssetPath = Join-Path $script:payloadCliRoot 'cdev-cli-linux-x64.tar.gz'
+        $script:payloadCliLinuxShaPath = Join-Path $script:payloadCliRoot 'cdev-cli-linux-x64.tar.gz.sha256'
+        $script:payloadCliContractPath = Join-Path $script:payloadCliRoot 'cli-contract.json'
 
         $requiredPaths = @(
             $script:manifestPath,
@@ -48,6 +58,8 @@ Describe 'Workspace surface contract' {
             $script:installScriptPath,
             $script:buildInstallerScriptPath,
             $script:bundleRunnerCliScriptPath,
+            $script:harnessRunnerBaselineScriptPath,
+            $script:harnessMachinePreflightScriptPath,
             $script:runnerCliDeterminismScriptPath,
             $script:installerDeterminismScriptPath,
             $script:writeProvenanceScriptPath,
@@ -58,6 +70,8 @@ Describe 'Workspace surface contract' {
             $script:driftWorkflowPath,
             $script:shaRefreshWorkflowPath,
             $script:releaseWorkflowPath,
+            $script:integrationGateWorkflowPath,
+            $script:installerHarnessWorkflowPath,
             $script:releaseCoreWorkflowPath,
             $script:releaseWithGateWorkflowPath,
             $script:canaryWorkflowPath,
@@ -67,7 +81,12 @@ Describe 'Workspace surface contract' {
             $script:payloadAgentsPath,
             $script:payloadManifestPath,
             $script:payloadAssertScriptPath,
-            $script:payloadPolicyScriptPath
+            $script:payloadPolicyScriptPath,
+            $script:payloadCliWinAssetPath,
+            $script:payloadCliWinShaPath,
+            $script:payloadCliLinuxAssetPath,
+            $script:payloadCliLinuxShaPath,
+            $script:payloadCliContractPath
         )
 
         foreach ($path in $requiredPaths) {
@@ -102,12 +121,46 @@ Describe 'Workspace surface contract' {
         $script:manifest.installer_contract.reproducibility.strict_hash_match | Should -BeTrue
         $script:manifest.installer_contract.provenance.schema_version | Should -Be '1.0'
         $script:manifest.installer_contract.canary.docker_context | Should -Be 'desktop-linux'
+        $script:manifest.installer_contract.cli_bundle.repo | Should -Be 'LabVIEW-Community-CI-CD/labview-cdev-cli'
+        $script:manifest.installer_contract.cli_bundle.asset_win | Should -Be 'cdev-cli-win-x64.zip'
+        $script:manifest.installer_contract.cli_bundle.asset_linux | Should -Be 'cdev-cli-linux-x64.tar.gz'
+        ([string]$script:manifest.installer_contract.cli_bundle.asset_win_sha256) | Should -Match '^[0-9a-f]{64}$'
+        ([string]$script:manifest.installer_contract.cli_bundle.asset_linux_sha256) | Should -Match '^[0-9a-f]{64}$'
+        $script:manifest.installer_contract.cli_bundle.entrypoint_win | Should -Be 'tools\cdev-cli\win-x64\cdev-cli\scripts\Invoke-CdevCli.ps1'
+        $script:manifest.installer_contract.cli_bundle.entrypoint_linux | Should -Be 'tools/cdev-cli/linux-x64/cdev-cli/scripts/Invoke-CdevCli.ps1'
+        $script:manifest.installer_contract.harness.workflow_name | Should -Be 'installer-harness-self-hosted.yml'
+        $script:manifest.installer_contract.harness.trigger_mode | Should -Be 'integration_branch_push_and_dispatch'
+        (@($script:manifest.installer_contract.harness.runner_labels) -contains 'self-hosted') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.runner_labels) -contains 'windows') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.runner_labels) -contains 'self-hosted-windows-lv') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.runner_labels) -contains 'installer-harness') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_reports) -contains 'iteration-summary.json') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_reports) -contains 'exercise-report.json') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_reports) -contains 'C:\dev-smoke-lvie\artifacts\workspace-install-latest.json') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_reports) -contains 'lvie-cdev-workspace-installer-bundle.zip') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_reports) -contains 'harness-validation-report.json') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_postactions) -contains 'ppl_capability_checks.32') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_postactions) -contains 'ppl_capability_checks.64') | Should -BeTrue
+        (@($script:manifest.installer_contract.harness.required_postactions) -contains 'vip_package_build_check') | Should -BeTrue
         foreach ($repo in @($script:manifest.managed_repos)) {
             $repo.PSObject.Properties.Name | Should -Contain 'required_gh_repo'
             $repo.PSObject.Properties.Name | Should -Contain 'default_branch'
             $repo.PSObject.Properties.Name | Should -Contain 'pinned_sha'
             ([string]$repo.pinned_sha) | Should -Match '^[0-9a-f]{40}$'
         }
+    }
+
+    It 'keeps bundled cdev CLI payload checksums aligned with manifest contract' {
+        $winAssetHash = (Get-FileHash -LiteralPath $script:payloadCliWinAssetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $linuxAssetHash = (Get-FileHash -LiteralPath $script:payloadCliLinuxAssetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $manifestWinHash = ([string]$script:manifest.installer_contract.cli_bundle.asset_win_sha256).ToLowerInvariant()
+        $manifestLinuxHash = ([string]$script:manifest.installer_contract.cli_bundle.asset_linux_sha256).ToLowerInvariant()
+
+        $winAssetHash | Should -Be $manifestWinHash
+        $linuxAssetHash | Should -Be $manifestLinuxHash
+
+        ((Get-Content -LiteralPath $script:payloadCliWinShaPath -Raw).Trim()).StartsWith($manifestWinHash) | Should -BeTrue
+        ((Get-Content -LiteralPath $script:payloadCliLinuxShaPath -Raw).Trim()).StartsWith($manifestLinuxHash) | Should -BeTrue
     }
 
     It 'contains codex skills fork and org entries in the manifest' {
@@ -125,8 +178,33 @@ Describe 'Workspace surface contract' {
         $script:agentsContent | Should -Match 'Workspace SHA Refresh PR'
         $script:agentsContent | Should -Match 'auto-merge'
         $script:agentsContent | Should -Match 'fallback'
+        $script:agentsContent | Should -Match 'Invoke-CdevCli\.ps1'
+        $script:agentsContent | Should -Match 'repos doctor'
+        $script:agentsContent | Should -Match 'installer exercise'
+        $script:agentsContent | Should -Match 'postactions collect'
+        $script:agentsContent | Should -Match 'linux deploy-ni'
+        $script:agentsContent | Should -Match 'desktop-linux'
+        $script:agentsContent | Should -Match 'nationalinstruments/labview:latest-linux'
+        $script:agentsContent | Should -Match 'Installer Harness Execution Contract'
+        $script:agentsContent | Should -Match 'integration/\*'
+        $script:agentsContent | Should -Match 'self-hosted-windows-lv'
+        $script:agentsContent | Should -Match 'installer-harness'
+        $script:agentsContent | Should -Match 'C:\\actions-runner-cdev'
+        $script:agentsContent | Should -Match 'C:\\actions-runner-cdev-2'
+        $script:agentsContent | Should -Match 'C:\\actions-runner-cdev-harness2'
+        $script:agentsContent | Should -Match 'iteration-summary\.json'
+        $script:agentsContent | Should -Match 'exercise-report\.json'
+        $script:agentsContent | Should -Match 'workspace-install-latest\.json'
         $script:readmeContent | Should -Match 'Workspace SHA Refresh PR'
         $script:readmeContent | Should -Match 'automation/sha-refresh'
+        $script:readmeContent | Should -Match 'Invoke-CdevCli\.ps1'
+        $script:readmeContent | Should -Match 'linux deploy-ni'
+        $script:readmeContent | Should -Match 'desktop-linux'
+        $script:readmeContent | Should -Match 'nationalinstruments/labview:latest-linux'
+        $script:readmeContent | Should -Match 'Installer Harness'
+        $script:readmeContent | Should -Match 'integration/'
+        $script:readmeContent | Should -Match 'self-hosted-windows-lv'
+        $script:readmeContent | Should -Match 'installer-harness'
     }
 
     It 'documents Windows feature troubleshooting reporting contract for Docker gating' {
@@ -155,6 +233,8 @@ Describe 'Workspace surface contract' {
         $script:ciWorkflowContent | Should -Match 'DockerDesktopLinuxIterationContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'RunnerCliBundleDeterminismContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'ProvenanceContract\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'IntegrationGateWorkflowContract\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'InstallerHarnessWorkflowContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'CiWorkflowReliabilityContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'WorkspaceShaRefreshPrContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'WorkspaceManifestPinRefreshScript\.Tests\.ps1'

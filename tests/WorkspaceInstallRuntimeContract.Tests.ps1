@@ -17,7 +17,7 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match '\[string\]\$WorkspaceRoot = ''C:\\dev'''
         $script:scriptContent | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s*\[string\]\$ManifestPath'
         $script:scriptContent | Should -Match '\[ValidateSet\(''Install'', ''Verify''\)\]'
-        $script:scriptContent | Should -Match '\$ExecutionContext = '''''
+        $script:scriptContent | Should -Match '\$InstallerExecutionContext = '''''
         $script:scriptContent | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s*\[string\]\$OutputPath'
     }
 
@@ -35,11 +35,32 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match 'Assert-WorkspaceGovernance\.ps1'
         $script:scriptContent | Should -Match 'runner-cli\.exe'
         $script:scriptContent | Should -Match 'runner-cli\.metadata\.json'
+        $script:scriptContent | Should -Match 'cli_bundle'
+        $script:scriptContent | Should -Match 'cdev-cli-win-x64\.zip'
+        $script:scriptContent | Should -Match 'cdev-cli-linux-x64\.tar\.gz'
+        $script:scriptContent | Should -Match 'Expand-CdevCliWindowsBundle'
+        $script:scriptContent | Should -Match 'cli-bundle'
         $script:scriptContent | Should -Match 'required_ppl_bitnesses'
         $script:scriptContent | Should -Match 'required_vip_bitness'
-        $script:scriptContent | Should -Match 'NsisInstall'
+        $script:scriptContent | Should -Match '-InstallerExecutionContext NsisInstall'
         $script:scriptContent | Should -Match 'Invoke-RunnerCliPplCapabilityCheck'
+        $script:scriptContent | Should -Match 'Test-PplBuildLabVIEWVersionAlignment'
+        $script:scriptContent | Should -Match 'labviewcli-executebuildspec-\*\.log'
+        $script:scriptContent | Should -Match 'Illegal combination: PPL build executed with LabVIEW'
+        $script:scriptContent | Should -Match 'failed on first attempt; retrying once after additional LabVIEW cleanup'
         $script:scriptContent | Should -Match 'Invoke-RunnerCliVipPackageHarnessCheck'
+        $script:scriptContent | Should -Match 'Invoke-VipcApplyWithVipmCli'
+        $script:scriptContent | Should -Match 'Get-VipcMismatchAssessment'
+        $script:scriptContent | Should -Match 'Invoke-PreVipLabVIEWCloseBestEffort'
+        $script:scriptContent | Should -Match 'Pre-VIP LabVIEW close \(best-effort\)'
+        $script:scriptContent | Should -Match 'Executing native VIPM CLI apply'
+        $script:scriptContent | Should -Match 'vipm_best_effort'
+        $script:scriptContent | Should -Match 'Non-blocking VIPC apply attempt failed; continuing to post-action gates'
+        $script:scriptContent | Should -Match 'VIPC assert still reports non-blocking mismatch roots after remediation'
+        $script:scriptContent | Should -Match 'sas_workshops_lib_lunit_for_g_cli'
+        $script:scriptContent | Should -Not -Match '''vipc'', ''apply'''
+        $script:scriptContent | Should -Match 'Invoke-VipBuild\.ps1'
+        $script:scriptContent | Should -Match '''-ExecutionLabVIEWYear'', \$RequiredLabviewYear'
         $script:scriptContent | Should -Match 'vipc assert'
         $script:scriptContent | Should -Match 'vip build'
         $script:scriptContent | Should -Match 'Write-InstallerFeedback'
@@ -48,6 +69,12 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match 'governance-audit'
         $script:scriptContent | Should -Match 'branch_protection_'
         $script:scriptContent | Should -Match 'branch_only_failure'
+    }
+
+    It 'sets a workspace-scoped LVIE_WORKTREE_ROOT during post-actions' {
+        $script:scriptContent | Should -Match '\$originalWorktreeRoot = \$env:LVIE_WORKTREE_ROOT'
+        $script:scriptContent | Should -Match '\$env:LVIE_WORKTREE_ROOT = \$effectiveWorktreeRoot'
+        $script:scriptContent | Should -Match 'Overriding LVIE_WORKTREE_ROOT for post-actions'
     }
 
     It 'has parse-safe PowerShell syntax' {

@@ -48,6 +48,8 @@ jobs:
             './tests/RunnerCliBundleDeterminismContract.Tests.ps1',
             './tests/WorkspaceInstallerDeterminismContract.Tests.ps1',
             './tests/ProvenanceContract.Tests.ps1',
+            './tests/IntegrationGateWorkflowContract.Tests.ps1',
+            './tests/InstallerHarnessWorkflowContract.Tests.ps1',
             './tests/NightlySupplyChainCanaryWorkflowContract.Tests.ps1',
             './tests/WindowsLabviewImageGateWorkflowContract.Tests.ps1',
             './tests/ReleaseWithWindowsGateWorkflowContract.Tests.ps1',

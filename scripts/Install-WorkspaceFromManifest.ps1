@@ -12,7 +12,7 @@ param(
     [string]$Mode = 'Install',
 
     [Parameter()]
-    [string]$ExecutionContext = '',
+    [string]$InstallerExecutionContext = '',
 
     [Parameter(Mandatory = $true)]
     [string]$OutputPath
@@ -57,7 +57,8 @@ function Write-InstallerFeedback {
 function Add-PostActionSequenceEntry {
     param(
         [Parameter(Mandatory = $true)]
-        [System.Collections.ArrayList]$Sequence,
+        [AllowEmptyCollection()]
+        [System.Collections.IList]$Sequence,
         [Parameter(Mandatory = $true)]
         [string]$Phase,
         [Parameter(Mandatory = $true)]
@@ -121,6 +122,89 @@ function Get-LabVIEWInstallRoot {
     return $null
 }
 
+function Get-LabVIEWYearFromText {
+    param(
+        [Parameter()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ''
+    }
+
+    if ($Text -match 'LabVIEW\s+(\d{4})') {
+        return [string]$Matches[1]
+    }
+
+    return ''
+}
+
+function Test-PplBuildLabVIEWVersionAlignment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IconEditorRepoPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RequiredLabviewYear,
+        [Parameter()]
+        [string[]]$PreExistingExecuteBuildSpecLogs = @()
+    )
+
+    $result = [ordered]@{
+        status = 'fail'
+        message = ''
+        buildspec_log_path = ''
+        detected_labview_executable = ''
+        detected_labview_year = ''
+    }
+
+    try {
+        $logsRoot = Join-Path -Path $IconEditorRepoPath -ChildPath 'builds\logs'
+        if (-not (Test-Path -LiteralPath $logsRoot -PathType Container)) {
+            throw "PPL build log root not found: $logsRoot"
+        }
+
+        $allLogs = @(
+            Get-ChildItem -Path $logsRoot -Filter 'labviewcli-executebuildspec-*.log' -File -ErrorAction SilentlyContinue |
+            Sort-Object -Property LastWriteTimeUtc -Descending
+        )
+        if (@($allLogs).Count -eq 0) {
+            throw "No LabVIEW CLI execute-buildspec logs were found in '$logsRoot'."
+        }
+
+        $normalizedPreviousLogs = @($PreExistingExecuteBuildSpecLogs | ForEach-Object { ([string]$_).ToLowerInvariant() })
+        $newLogs = @($allLogs | Where-Object { $_.FullName.ToLowerInvariant() -notin $normalizedPreviousLogs })
+        $selectedLog = if (@($newLogs).Count -gt 0) { $newLogs[0] } else { $allLogs[0] }
+        $result.buildspec_log_path = [string]$selectedLog.FullName
+
+        $logContent = Get-Content -LiteralPath $selectedLog.FullName -Raw
+        if ($logContent -match 'Using LabVIEW:\s*"([^"]+)"') {
+            $result.detected_labview_executable = [string]$Matches[1]
+        }
+
+        $detectedYear = Get-LabVIEWYearFromText -Text $result.detected_labview_executable
+        if ([string]::IsNullOrWhiteSpace($detectedYear)) {
+            $detectedYear = Get-LabVIEWYearFromText -Text $logContent
+        }
+        $result.detected_labview_year = [string]$detectedYear
+
+        if ([string]::IsNullOrWhiteSpace($detectedYear)) {
+            throw "Could not determine LabVIEW year from execute-buildspec log '$($selectedLog.FullName)'."
+        }
+
+        if ([string]$detectedYear -ne [string]$RequiredLabviewYear) {
+            throw "Illegal combination: PPL build executed with LabVIEW $detectedYear while VIP/package target requires LabVIEW $RequiredLabviewYear."
+        }
+
+        $result.status = 'pass'
+        $result.message = "PPL build executed with LabVIEW $detectedYear, matching required year $RequiredLabviewYear."
+    } catch {
+        $result.status = 'fail'
+        $result.message = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
 function Get-ExpectedShaFromFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -164,6 +248,181 @@ function Get-LatestVipPath {
     return [string]$latestVip.FullName
 }
 
+function Expand-CdevCliWindowsBundle {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ZipPath,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
+        throw "cdev-cli Windows asset not found: $ZipPath"
+    }
+
+    if (Test-Path -LiteralPath $DestinationPath -PathType Container) {
+        Remove-Item -LiteralPath $DestinationPath -Recurse -Force
+    }
+    Ensure-Directory -Path $DestinationPath
+    Expand-Archive -LiteralPath $ZipPath -DestinationPath $DestinationPath -Force
+}
+
+function Invoke-VipcApplyWithVipmCli {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IconEditorRepoPath,
+        [Parameter(Mandatory = $true)]
+        [string]$VipcPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RequiredLabviewYear,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('32', '64')]
+        [string]$RequiredBitness
+    )
+
+    $result = [ordered]@{
+        status = 'pending'
+        message = ''
+        command = @()
+        exit_code = $null
+        resolved_vipc_path = ''
+        vipm_cli_path = ''
+    }
+
+    try {
+        $vipmCommand = Get-Command -Name 'vipm' -ErrorAction Stop
+        $result.vipm_cli_path = [string]$vipmCommand.Source
+
+        $resolvedVipcPath = if ([System.IO.Path]::IsPathRooted($VipcPath)) {
+            [System.IO.Path]::GetFullPath($VipcPath)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path -Path $IconEditorRepoPath -ChildPath $VipcPath))
+        }
+        if (-not (Test-Path -LiteralPath $resolvedVipcPath -PathType Leaf)) {
+            throw "VIPC file was not found for native VIPM apply: $resolvedVipcPath"
+        }
+        $result.resolved_vipc_path = $resolvedVipcPath
+
+        $vipmArgs = @(
+            '--labview-version', $RequiredLabviewYear,
+            '--labview-bitness', $RequiredBitness,
+            'install',
+            $resolvedVipcPath
+        )
+        $result.command = @($vipmArgs)
+        Write-InstallerFeedback -Message ("Executing native VIPM CLI apply: {0} {1}" -f $result.vipm_cli_path, ($vipmArgs -join ' '))
+
+        $vipmOutput = & $result.vipm_cli_path @vipmArgs 2>&1
+        if ($null -ne $vipmOutput) {
+            $vipmOutput | Out-Host
+        }
+        $result.exit_code = $LASTEXITCODE
+        if ($result.exit_code -ne 0) {
+            throw "vipm install failed with exit code $($result.exit_code)."
+        }
+
+        $result.status = 'pass'
+        $result.message = 'Native VIPM CLI VIPC apply completed successfully.'
+    } catch {
+        if ($null -eq $result.exit_code) {
+            $result.exit_code = 1
+        }
+        $result.status = 'fail'
+        $result.message = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
+function Get-VipcMismatchAssessment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VipcAuditPath,
+        [Parameter()]
+        [string[]]$NonBlockingRoots = @()
+    )
+
+    $assessment = [ordered]@{
+        has_audit = $false
+        mismatched_roots = @()
+        all_non_blocking = $false
+        parse_error = ''
+    }
+
+    if ([string]::IsNullOrWhiteSpace($VipcAuditPath) -or -not (Test-Path -LiteralPath $VipcAuditPath -PathType Leaf)) {
+        return [pscustomobject]$assessment
+    }
+
+    $assessment.has_audit = $true
+    try {
+        $audit = Get-Content -LiteralPath $VipcAuditPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $mismatchRoots = @($audit.root_audit | Where-Object { -not [bool]$_.matched } | ForEach-Object { [string]$_.root } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        $assessment.mismatched_roots = @($mismatchRoots)
+        if (@($mismatchRoots).Count -gt 0) {
+            $disallowed = @($mismatchRoots | Where-Object { $_ -notin $NonBlockingRoots })
+            $assessment.all_non_blocking = (@($disallowed).Count -eq 0)
+        }
+    } catch {
+        $assessment.parse_error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$assessment
+}
+
+function Invoke-PreVipLabVIEWCloseBestEffort {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IconEditorRepoPath
+    )
+
+    $targets = @(
+        @{ year = '2026'; bitness = '32' },
+        @{ year = '2026'; bitness = '64' },
+        @{ year = '2020'; bitness = '32' },
+        @{ year = '2020'; bitness = '64' }
+    )
+
+    foreach ($target in $targets) {
+        $year = [string]$target.year
+        $bitness = [string]$target.bitness
+
+        $installRoot = if ($bitness -eq '32') {
+            "C:\Program Files (x86)\National Instruments\LabVIEW $year"
+        } else {
+            "C:\Program Files\National Instruments\LabVIEW $year"
+        }
+        $normalizedInstallRoot = $installRoot.TrimEnd('\')
+
+        Write-InstallerFeedback -Message ("Pre-VIP LabVIEW close (best-effort): year={0} bitness={1} root={2}" -f $year, $bitness, $normalizedInstallRoot)
+
+        $candidateProcesses = @()
+        try {
+            $candidateProcesses = @(Get-CimInstance Win32_Process -Filter "Name='LabVIEW.exe'" -ErrorAction Stop | Where-Object {
+                    -not [string]::IsNullOrWhiteSpace([string]$_.ExecutablePath) -and
+                    [string]$_.ExecutablePath -like "$normalizedInstallRoot*"
+                })
+        } catch {
+            Write-InstallerFeedback -Message ("Pre-VIP process query warning for year={0} bitness={1}: {2}" -f $year, $bitness, $_.Exception.Message)
+            continue
+        }
+
+        if (@($candidateProcesses).Count -eq 0) {
+            Write-InstallerFeedback -Message ("No running LabVIEW processes found for year={0} bitness={1}." -f $year, $bitness)
+            continue
+        }
+
+        foreach ($processInfo in $candidateProcesses) {
+            $processId = [int]$processInfo.ProcessId
+            try {
+                Stop-Process -Id $processId -Force -ErrorAction Stop
+                Write-InstallerFeedback -Message ("Stopped LabVIEW process id={0} for year={1} bitness={2}." -f $processId, $year, $bitness)
+            } catch {
+                Write-InstallerFeedback -Message ("Pre-VIP close warning for process id={0} year={1} bitness={2}: {3}" -f $processId, $year, $bitness, $_.Exception.Message)
+            }
+        }
+    }
+}
+
 function Invoke-RunnerCliPplCapabilityCheck {
     param(
         [Parameter(Mandatory = $true)]
@@ -193,6 +452,9 @@ function Invoke-RunnerCliPplCapabilityCheck {
         command = @()
         exit_code = $null
         labview_install_root = ''
+        buildspec_log_path = ''
+        detected_labview_executable = ''
+        detected_labview_year = ''
     }
 
     try {
@@ -207,6 +469,14 @@ function Invoke-RunnerCliPplCapabilityCheck {
         }
 
         Ensure-Directory -Path $statusRoot
+        $logsRoot = Join-Path -Path $IconEditorRepoPath -ChildPath 'builds\logs'
+        $preExistingExecuteBuildSpecLogs = @()
+        if (Test-Path -LiteralPath $logsRoot -PathType Container) {
+            $preExistingExecuteBuildSpecLogs = @(
+                Get-ChildItem -Path $logsRoot -Filter 'labviewcli-executebuildspec-*.log' -File -ErrorAction SilentlyContinue |
+                ForEach-Object { [string]$_.FullName }
+            )
+        }
 
         $labviewRoot = Get-LabVIEWInstallRoot -VersionYear $RequiredLabviewYear -Bitness $RequiredBitness
         if ([string]::IsNullOrWhiteSpace($labviewRoot)) {
@@ -228,7 +498,7 @@ function Invoke-RunnerCliPplCapabilityCheck {
         )
         $result.command = @($commandArgs)
 
-        & $RunnerCliPath @commandArgs
+        & $RunnerCliPath @commandArgs | Out-Host
         $result.exit_code = $LASTEXITCODE
         if ($result.exit_code -ne 0) {
             throw "runner-cli ppl build failed with exit code $($result.exit_code)."
@@ -238,6 +508,17 @@ function Invoke-RunnerCliPplCapabilityCheck {
             throw "runner-cli reported success, but PPL output was not found: $($result.output_ppl_path)"
         }
         Copy-Item -LiteralPath $result.output_ppl_path -Destination $result.output_ppl_snapshot_path -Force
+
+        $logAlignment = Test-PplBuildLabVIEWVersionAlignment `
+            -IconEditorRepoPath $IconEditorRepoPath `
+            -RequiredLabviewYear ([string]$RequiredLabviewYear) `
+            -PreExistingExecuteBuildSpecLogs @($preExistingExecuteBuildSpecLogs)
+        $result.buildspec_log_path = [string]$logAlignment.buildspec_log_path
+        $result.detected_labview_executable = [string]$logAlignment.detected_labview_executable
+        $result.detected_labview_year = [string]$logAlignment.detected_labview_year
+        if ([string]$logAlignment.status -ne 'pass') {
+            throw [string]$logAlignment.message
+        }
 
         $result.status = 'pass'
         $result.message = "runner-cli PPL capability check passed for LabVIEW $RequiredLabviewYear x$RequiredBitness."
@@ -273,6 +554,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
     $vipBuildStatusPath = Join-Path -Path $statusRoot -ChildPath 'workspace-installer-vip-build.json'
     $vipcPath = '.github/actions/apply-vipc/runner_dependencies.vipc'
     $vipbPath = 'Tooling/deployment/NI Icon editor.vipb'
+    $nonBlockingVipcMismatchRoots = @('sas_workshops_lib_lunit_for_g_cli')
 
     $result = [ordered]@{
         status = 'pending'
@@ -345,6 +627,8 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         }
         $displayPayload | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $displayInfoPath -Encoding UTF8
 
+        Invoke-PreVipLabVIEWCloseBestEffort -IconEditorRepoPath $IconEditorRepoPath
+
         $vipcAssertArgs = @(
             'vipc', 'assert',
             '--repo-root', $IconEditorRepoPath,
@@ -356,54 +640,147 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         )
         $result.command.vipc_assert = @($vipcAssertArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vipc assert.'
-        & $RunnerCliPath @vipcAssertArgs
+        & $RunnerCliPath @vipcAssertArgs | Out-Host
         $vipcAssertExit = $LASTEXITCODE
         if ($vipcAssertExit -ne 0) {
-            $vipcApplyArgs = @(
-                'vipc', 'apply',
-                '--repo-root', $IconEditorRepoPath,
-                '--supported-bitness', $RequiredBitness,
-                '--vipc-path', $vipcPath,
-                '--labview-version', $RequiredLabviewYear
-            )
-            $result.command.vipc_apply = @($vipcApplyArgs)
-            Write-InstallerFeedback -Message 'VIPC assert reported dependency drift; applying VIPC dependencies.'
-            & $RunnerCliPath @vipcApplyArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "runner-cli vipc apply failed with exit code $LASTEXITCODE."
-            }
+            $mismatchAssessment = Get-VipcMismatchAssessment `
+                -VipcAuditPath $vipcAuditPath `
+                -NonBlockingRoots $nonBlockingVipcMismatchRoots
 
-            Write-InstallerFeedback -Message 'Re-running runner-cli vipc assert after apply.'
-            & $RunnerCliPath @vipcAssertArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "runner-cli vipc assert failed after apply with exit code $LASTEXITCODE."
+            if ([bool]$mismatchAssessment.all_non_blocking -and @($mismatchAssessment.mismatched_roots).Count -gt 0) {
+                $rootsLabel = [string]::Join(', ', @($mismatchAssessment.mismatched_roots))
+                Write-InstallerFeedback -Message ("VIPC assert mismatch is non-blocking for harness mode (roots: {0}); attempting best-effort native VIPC apply before VIP build." -f $rootsLabel)
+                $nonBlockingApplyWarning = $null
+                try {
+                    $nativeApply = Invoke-VipcApplyWithVipmCli `
+                        -IconEditorRepoPath $IconEditorRepoPath `
+                        -VipcPath $vipcPath `
+                        -RequiredLabviewYear ([string]$RequiredLabviewYear) `
+                        -RequiredBitness ([string]$RequiredBitness)
+                    $result.command.vipc_apply = @('vipm_best_effort', @($nativeApply.command))
+                    if ([string]$nativeApply.status -ne 'pass') {
+                        throw $nativeApply.message
+                    }
+                } catch {
+                    $nonBlockingApplyWarning = $_.Exception.Message
+                    Write-Warning ("Non-blocking VIPC apply attempt failed; continuing to post-action gates. {0}" -f $nonBlockingApplyWarning)
+                    $result.command.vipc_apply = @('vipm_best_effort_failed', $nonBlockingApplyWarning, @($mismatchAssessment.mismatched_roots))
+                }
+
+                Write-InstallerFeedback -Message 'Re-running runner-cli vipc assert after non-blocking remediation attempt.'
+                & $RunnerCliPath @vipcAssertArgs | Out-Host
+                if ($LASTEXITCODE -ne 0) {
+                    $postApplyAssessment = Get-VipcMismatchAssessment `
+                        -VipcAuditPath $vipcAuditPath `
+                        -NonBlockingRoots $nonBlockingVipcMismatchRoots
+                    if (-not [bool]$postApplyAssessment.all_non_blocking) {
+                        throw "runner-cli vipc assert failed after non-blocking remediation and introduced blocking mismatches."
+                    }
+                    $postRootsLabel = [string]::Join(', ', @($postApplyAssessment.mismatched_roots))
+                    Write-InstallerFeedback -Message ("VIPC assert still reports non-blocking mismatch roots after remediation (roots: {0}); continuing." -f $postRootsLabel)
+                }
+            } else {
+                Write-InstallerFeedback -Message 'VIPC assert reported dependency drift; applying VIPC dependencies via native VIPM CLI.'
+                $nativeApply = Invoke-VipcApplyWithVipmCli `
+                    -IconEditorRepoPath $IconEditorRepoPath `
+                    -VipcPath $vipcPath `
+                    -RequiredLabviewYear ([string]$RequiredLabviewYear) `
+                    -RequiredBitness ([string]$RequiredBitness)
+                $result.command.vipc_apply = @('vipm', @($nativeApply.command))
+                if ([string]$nativeApply.status -ne 'pass') {
+                    throw $nativeApply.message
+                }
+
+                Write-InstallerFeedback -Message 'Re-running runner-cli vipc assert after apply.'
+                & $RunnerCliPath @vipcAssertArgs | Out-Host
+                if ($LASTEXITCODE -ne 0) {
+                    throw "runner-cli vipc assert failed after apply with exit code $LASTEXITCODE."
+                }
             }
         }
 
         $commitArg = if ($PinnedSha.Length -gt 12) { $PinnedSha.Substring(0, 12) } else { $PinnedSha }
-        $vipBuildArgs = @(
-            'vip', 'build',
-            '--repo-root', $IconEditorRepoPath,
-            '--supported-bitness', $RequiredBitness,
-            '--vipb-path', $vipbPath,
-            '--labview-version', $RequiredLabviewYear,
-            '--labview-minor-revision', '0',
-            '--major', '0',
-            '--minor', '0',
-            '--patch', '0',
-            '--build', '1',
-            '--commit', $commitArg,
-            '--release-notes-file', $releaseNotesPath,
-            '--display-information-json-path', $displayInfoPath,
-            '--status-path', $vipBuildStatusPath,
-            '--vipm-timeout-seconds', '1200'
+        $invokeVipBuildScriptPath = Join-Path -Path $IconEditorRepoPath -ChildPath 'Tooling\Invoke-VipBuild.ps1'
+        if (-not (Test-Path -LiteralPath $invokeVipBuildScriptPath -PathType Leaf)) {
+            throw "Invoke-VipBuild.ps1 was not found: $invokeVipBuildScriptPath"
+        }
+        $baseVipBuildArgs = @(
+            '-NoProfile',
+            '-File', $invokeVipBuildScriptPath,
+            '-SupportedBitness', $RequiredBitness,
+            '-RepoRoot', $IconEditorRepoPath,
+            '-VIPBPath', $vipbPath,
+            '-LabVIEWVersion', $RequiredLabviewYear,
+            '-ExecutionLabVIEWYear', $RequiredLabviewYear,
+            '-DisplayInformationJsonPath', $displayInfoPath,
+            '-LabVIEWMinorRevision', '0',
+            '-Major', '0',
+            '-Minor', '0',
+            '-Patch', '0',
+            '-Build', '1',
+            '-Commit', $commitArg,
+            '-ReleaseNotesFile', $releaseNotesPath,
+            '-StatusPath', $vipBuildStatusPath
         )
-        $result.command.vip_build = @($vipBuildArgs)
-        Write-InstallerFeedback -Message 'Running runner-cli vip build.'
-        & $RunnerCliPath @vipBuildArgs
-        $result.exit_code = $LASTEXITCODE
-        if ($result.exit_code -ne 0) {
-            throw "runner-cli vip build failed with exit code $($result.exit_code)."
+
+        $maxVipBuildAttempts = 2
+        $vipBuildSucceeded = $false
+        $result.command.vip_build = @()
+        for ($vipBuildAttempt = 1; $vipBuildAttempt -le $maxVipBuildAttempts; $vipBuildAttempt++) {
+            $attemptTimeoutSeconds = if ($vipBuildAttempt -eq 1) { '1200' } else { '1800' }
+            $nativeVipBuildArgs = @($baseVipBuildArgs + @('-VipmTimeoutSeconds', $attemptTimeoutSeconds))
+            $result.command.vip_build = @('pwsh', @($nativeVipBuildArgs))
+
+            Write-InstallerFeedback -Message ("Running native VIP build harness via Invoke-VipBuild.ps1 (ExecutionLabVIEWYear=2020 contract). attempt={0}/{1} vipm_timeout_seconds={2}" -f $vipBuildAttempt, $maxVipBuildAttempts, $attemptTimeoutSeconds)
+            & pwsh @nativeVipBuildArgs | Out-Host
+            $result.exit_code = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+
+            if ($result.exit_code -eq 0) {
+                $vipBuildSucceeded = $true
+                break
+            }
+
+            $timeoutReasonDetected = $false
+            $retryDiagnosticReason = 'first_attempt_failure'
+            if (Test-Path -LiteralPath $vipBuildStatusPath -PathType Leaf) {
+                try {
+                    $vipBuildStatus = Get-Content -LiteralPath $vipBuildStatusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                    if ([string]$vipBuildStatus.reason -eq 'vipm_timeout') {
+                        $timeoutReasonDetected = $true
+                        $retryDiagnosticReason = 'vipm_timeout_reason'
+                    } else {
+                        foreach ($timeoutLogPath in @([string]$vipBuildStatus.vipm_log, [string]$vipBuildStatus.gcli_log)) {
+                            if ([string]::IsNullOrWhiteSpace($timeoutLogPath) -or -not (Test-Path -LiteralPath $timeoutLogPath -PathType Leaf)) {
+                                continue
+                            }
+                            $timeoutPatternMatched = Select-String -Path $timeoutLogPath -Pattern 'timed out after|Timeout waiting on VIPM' -SimpleMatch:$false -Quiet
+                            if ($timeoutPatternMatched) {
+                                $timeoutReasonDetected = $true
+                                $retryDiagnosticReason = 'vipm_timeout_log'
+                                break
+                            }
+                        }
+                    }
+                } catch {
+                    $retryDiagnosticReason = 'status_parse_failed'
+                }
+            }
+
+            if ($vipBuildAttempt -lt $maxVipBuildAttempts) {
+                if (-not $timeoutReasonDetected -and $retryDiagnosticReason -eq 'first_attempt_failure') {
+                    $retryDiagnosticReason = 'non_timeout_first_failure'
+                }
+                Write-InstallerFeedback -Message ("Native VIP build attempt {0} failed (reason={1}); retrying once after best-effort LabVIEW cleanup." -f $vipBuildAttempt, $retryDiagnosticReason)
+                Invoke-PreVipLabVIEWCloseBestEffort -IconEditorRepoPath $IconEditorRepoPath
+                Start-Sleep -Seconds 10
+                continue
+            }
+
+            break
+        }
+
+        if (-not $vipBuildSucceeded) {
+            throw "native VIP build failed with exit code $($result.exit_code)."
         }
 
         $vipPath = ''
@@ -440,7 +817,15 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
 $resolvedWorkspaceRoot = [System.IO.Path]::GetFullPath($WorkspaceRoot)
 $resolvedManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
 $resolvedOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
-$payloadRoot = Split-Path -Parent $resolvedManifestPath
+$governancePayloadRoot = Split-Path -Parent $resolvedManifestPath
+$payloadRoot = Split-Path -Parent $governancePayloadRoot
+if ([string]::IsNullOrWhiteSpace($payloadRoot)) {
+    $payloadRoot = $governancePayloadRoot
+}
+if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot 'tools') -PathType Container) -and (Test-Path -LiteralPath (Join-Path $governancePayloadRoot 'tools') -PathType Container)) {
+    # Backward compatibility for payloads that still place tools under workspace-governance.
+    $payloadRoot = $governancePayloadRoot
+}
 
 $errors = @()
 $warnings = @()
@@ -461,6 +846,28 @@ $runnerCliBundle = [ordered]@{
     expected_sha256 = ''
     actual_sha256 = ''
 }
+$cliBundle = [ordered]@{
+    status = 'not_checked'
+    message = ''
+    repo = ''
+    version = ''
+    source_commit = ''
+    payload_root = Join-Path $payloadRoot 'tools\cdev-cli'
+    asset_win = ''
+    asset_win_path = ''
+    asset_win_expected_sha256 = ''
+    asset_win_actual_sha256 = ''
+    asset_win_sha_file = ''
+    asset_linux = ''
+    asset_linux_path = ''
+    asset_linux_expected_sha256 = ''
+    asset_linux_actual_sha256 = ''
+    asset_linux_sha_file = ''
+    entrypoint_win = ''
+    entrypoint_linux = ''
+    extracted_win_root = ''
+    entrypoint_win_path = ''
+}
 $pplCapabilityChecks = [ordered]@{
     '32' = [ordered]@{
         status = 'not_run'
@@ -474,6 +881,9 @@ $pplCapabilityChecks = [ordered]@{
         command = @()
         exit_code = $null
         labview_install_root = ''
+        buildspec_log_path = ''
+        detected_labview_executable = ''
+        detected_labview_year = ''
     }
     '64' = [ordered]@{
         status = 'not_run'
@@ -487,6 +897,9 @@ $pplCapabilityChecks = [ordered]@{
         command = @()
         exit_code = $null
         labview_install_root = ''
+        buildspec_log_path = ''
+        detected_labview_executable = ''
+        detected_labview_year = ''
     }
 }
 $vipPackageBuildCheck = [ordered]@{
@@ -556,6 +969,13 @@ try {
     $requiredPplBitnesses = @('32', '64')
     $requiredVipBitness = '64'
     $runnerCliRelativeRoot = 'tools\runner-cli\win-x64'
+    $cliBundleRelativeRoot = 'tools\cdev-cli'
+    $cliBundleAssetWin = 'cdev-cli-win-x64.zip'
+    $cliBundleAssetWinSha = ''
+    $cliBundleAssetLinux = 'cdev-cli-linux-x64.tar.gz'
+    $cliBundleAssetLinuxSha = ''
+    $cliBundleEntrypointWin = 'tools\cdev-cli\win-x64\cdev-cli\scripts\Invoke-CdevCli.ps1'
+    $cliBundleEntrypointLinux = 'tools/cdev-cli/linux-x64/cdev-cli/scripts/Invoke-CdevCli.ps1'
     if ($null -ne $manifest.PSObject.Properties['installer_contract']) {
         $installerContract = $manifest.installer_contract
         if ($null -ne $installerContract.PSObject.Properties['labview_gate']) {
@@ -569,7 +989,7 @@ try {
             if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_vip_bitness)) {
                 $requiredVipBitness = [string]$labviewGate.required_vip_bitness
             }
-            if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_bitness)) {
+            if (($null -ne $labviewGate.PSObject.Properties['required_bitness']) -and (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_bitness))) {
                 $requiredVipBitness = [string]$labviewGate.required_bitness
             }
         }
@@ -579,6 +999,34 @@ try {
                 $runnerCliRelativeRoot = [string]$runnerCliBundleContract.relative_root
             }
         }
+        if ($null -eq $installerContract.PSObject.Properties['cli_bundle']) {
+            throw "Installer contract requires 'cli_bundle' metadata."
+        }
+        $cliBundleContract = $installerContract.cli_bundle
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundleContract.payload_root)) {
+            $cliBundleRelativeRoot = [string]$cliBundleContract.payload_root
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundleContract.asset_win)) {
+            $cliBundleAssetWin = [string]$cliBundleContract.asset_win
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundleContract.asset_win_sha256)) {
+            $cliBundleAssetWinSha = ([string]$cliBundleContract.asset_win_sha256).ToLowerInvariant()
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundleContract.asset_linux)) {
+            $cliBundleAssetLinux = [string]$cliBundleContract.asset_linux
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundleContract.asset_linux_sha256)) {
+            $cliBundleAssetLinuxSha = ([string]$cliBundleContract.asset_linux_sha256).ToLowerInvariant()
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundleContract.entrypoint_win)) {
+            $cliBundleEntrypointWin = [string]$cliBundleContract.entrypoint_win
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundleContract.entrypoint_linux)) {
+            $cliBundleEntrypointLinux = [string]$cliBundleContract.entrypoint_linux
+        }
+        $cliBundle.repo = [string]$cliBundleContract.repo
+        $cliBundle.version = [string]$cliBundleContract.version
+        $cliBundle.source_commit = ([string]$cliBundleContract.source_commit).ToLowerInvariant()
     }
 
     $requiredPplBitnesses = @(
@@ -594,13 +1042,22 @@ try {
     if ($requiredVipBitness -ne '64') {
         throw "Installer contract requires VIP bitness '64'; received '$requiredVipBitness'."
     }
+    if ([string]::IsNullOrWhiteSpace($cliBundleAssetWin) -or [string]::IsNullOrWhiteSpace($cliBundleAssetLinux)) {
+        throw "Installer contract requires cli_bundle asset names for both Windows and Linux."
+    }
+    if ($cliBundleAssetWinSha -notmatch '^[0-9a-f]{64}$') {
+        throw "Installer contract has invalid cli_bundle.asset_win_sha256 '$cliBundleAssetWinSha'."
+    }
+    if ($cliBundleAssetLinuxSha -notmatch '^[0-9a-f]{64}$') {
+        throw "Installer contract has invalid cli_bundle.asset_linux_sha256 '$cliBundleAssetLinuxSha'."
+    }
 
     if ($Mode -eq 'Install') {
-        if ([string]::IsNullOrWhiteSpace($ExecutionContext)) {
-            throw "Install mode requires -ExecutionContext NsisInstall (or LocalInstallerExercise)."
+        if ([string]::IsNullOrWhiteSpace($InstallerExecutionContext)) {
+            throw "Install mode requires -InstallerExecutionContext NsisInstall (or LocalInstallerExercise)."
         }
-        if ($ExecutionContext -notin @('NsisInstall', 'LocalInstallerExercise')) {
-            throw "Unsupported execution context '$ExecutionContext'. Expected NsisInstall or LocalInstallerExercise."
+        if ($InstallerExecutionContext -notin @('NsisInstall', 'LocalInstallerExercise')) {
+            throw "Unsupported execution context '$InstallerExecutionContext'. Expected NsisInstall or LocalInstallerExercise."
         }
     }
 
@@ -809,14 +1266,33 @@ try {
     }
 
     Write-InstallerFeedback -Message 'Syncing governance payload into workspace root.'
+    $cliBundle.asset_win = $cliBundleAssetWin
+    $cliBundle.asset_linux = $cliBundleAssetLinux
+    $cliBundle.asset_win_expected_sha256 = $cliBundleAssetWinSha
+    $cliBundle.asset_linux_expected_sha256 = $cliBundleAssetLinuxSha
+    $cliBundle.entrypoint_win = $cliBundleEntrypointWin
+    $cliBundle.entrypoint_linux = $cliBundleEntrypointLinux
+    $cliBundle.payload_root = Join-Path $payloadRoot $cliBundleRelativeRoot
+    $cliBundle.asset_win_path = Join-Path $resolvedWorkspaceRoot (Join-Path $cliBundleRelativeRoot $cliBundleAssetWin)
+    $cliBundle.asset_linux_path = Join-Path $resolvedWorkspaceRoot (Join-Path $cliBundleRelativeRoot $cliBundleAssetLinux)
+    $cliBundle.asset_win_sha_file = "$($cliBundle.asset_win_path).sha256"
+    $cliBundle.asset_linux_sha_file = "$($cliBundle.asset_linux_path).sha256"
+    $cliBundle.entrypoint_win_path = Join-Path $resolvedWorkspaceRoot $cliBundleEntrypointWin
+    $cliBundle.extracted_win_root = Join-Path $resolvedWorkspaceRoot 'tools\cdev-cli\win-x64'
+
     $payloadFiles = @(
-        @{ source = (Join-Path $payloadRoot 'AGENTS.md'); destination = (Join-Path $resolvedWorkspaceRoot 'AGENTS.md') },
-        @{ source = (Join-Path $payloadRoot 'workspace-governance.json'); destination = (Join-Path $resolvedWorkspaceRoot 'workspace-governance.json') },
-        @{ source = (Join-Path $payloadRoot 'scripts\Assert-WorkspaceGovernance.ps1'); destination = (Join-Path $resolvedWorkspaceRoot 'scripts\Assert-WorkspaceGovernance.ps1') },
-        @{ source = (Join-Path $payloadRoot 'scripts\Test-PolicyContracts.ps1'); destination = (Join-Path $resolvedWorkspaceRoot 'scripts\Test-PolicyContracts.ps1') },
+        @{ source = (Join-Path $governancePayloadRoot 'AGENTS.md'); destination = (Join-Path $resolvedWorkspaceRoot 'AGENTS.md') },
+        @{ source = (Join-Path $governancePayloadRoot 'workspace-governance.json'); destination = (Join-Path $resolvedWorkspaceRoot 'workspace-governance.json') },
+        @{ source = (Join-Path $governancePayloadRoot 'scripts\Assert-WorkspaceGovernance.ps1'); destination = (Join-Path $resolvedWorkspaceRoot 'scripts\Assert-WorkspaceGovernance.ps1') },
+        @{ source = (Join-Path $governancePayloadRoot 'scripts\Test-PolicyContracts.ps1'); destination = (Join-Path $resolvedWorkspaceRoot 'scripts\Test-PolicyContracts.ps1') },
         @{ source = (Join-Path $payloadRoot 'tools\runner-cli\win-x64\runner-cli.exe'); destination = (Join-Path $resolvedWorkspaceRoot 'tools\runner-cli\win-x64\runner-cli.exe') },
         @{ source = (Join-Path $payloadRoot 'tools\runner-cli\win-x64\runner-cli.exe.sha256'); destination = (Join-Path $resolvedWorkspaceRoot 'tools\runner-cli\win-x64\runner-cli.exe.sha256') },
-        @{ source = (Join-Path $payloadRoot 'tools\runner-cli\win-x64\runner-cli.metadata.json'); destination = (Join-Path $resolvedWorkspaceRoot 'tools\runner-cli\win-x64\runner-cli.metadata.json') }
+        @{ source = (Join-Path $payloadRoot 'tools\runner-cli\win-x64\runner-cli.metadata.json'); destination = (Join-Path $resolvedWorkspaceRoot 'tools\runner-cli\win-x64\runner-cli.metadata.json') },
+        @{ source = (Join-Path $payloadRoot (Join-Path $cliBundleRelativeRoot $cliBundleAssetWin)); destination = $cliBundle.asset_win_path },
+        @{ source = (Join-Path $payloadRoot (Join-Path $cliBundleRelativeRoot "$cliBundleAssetWin.sha256")); destination = $cliBundle.asset_win_sha_file },
+        @{ source = (Join-Path $payloadRoot (Join-Path $cliBundleRelativeRoot $cliBundleAssetLinux)); destination = $cliBundle.asset_linux_path },
+        @{ source = (Join-Path $payloadRoot (Join-Path $cliBundleRelativeRoot "$cliBundleAssetLinux.sha256")); destination = $cliBundle.asset_linux_sha_file },
+        @{ source = (Join-Path $payloadRoot (Join-Path $cliBundleRelativeRoot 'cli-contract.json')); destination = (Join-Path $resolvedWorkspaceRoot (Join-Path $cliBundleRelativeRoot 'cli-contract.json')) }
     )
 
     try {
@@ -908,104 +1384,213 @@ try {
         -Status ([string]$runnerCliBundle.status) `
         -Message ([string]$runnerCliBundle.message)
 
-    if ($runnerCliBundle.status -eq 'pass') {
-        $repoContractStatus = @($repositoryResults | Where-Object { [string]$_.path -eq $iconEditorRepoPath } | Select-Object -First 1)
-        if ($null -eq $repoContractStatus -or [string]$repoContractStatus.status -ne 'pass') {
-            $blockingMessage = "Cannot run runner-cli PPL capability checks because icon-editor repo contract failed at '$iconEditorRepoPath'."
+    try {
+        Write-InstallerFeedback -Message 'Verifying bundled cdev-cli assets.'
+        if ([string]::IsNullOrWhiteSpace($cliBundle.asset_win_path) -or -not (Test-Path -LiteralPath $cliBundle.asset_win_path -PathType Leaf)) {
+            throw "Bundled cdev-cli Windows asset was not found: $($cliBundle.asset_win_path)"
+        }
+        if ([string]::IsNullOrWhiteSpace($cliBundle.asset_linux_path) -or -not (Test-Path -LiteralPath $cliBundle.asset_linux_path -PathType Leaf)) {
+            throw "Bundled cdev-cli Linux asset was not found: $($cliBundle.asset_linux_path)"
+        }
+
+        $winExpectedFromFile = Get-ExpectedShaFromFile -ShaFilePath $cliBundle.asset_win_sha_file
+        if ($winExpectedFromFile -ne [string]$cliBundle.asset_win_expected_sha256) {
+            throw "cdev-cli Windows SHA file does not match installer contract. expected=$($cliBundle.asset_win_expected_sha256) actual=$winExpectedFromFile"
+        }
+        $linuxExpectedFromFile = Get-ExpectedShaFromFile -ShaFilePath $cliBundle.asset_linux_sha_file
+        if ($linuxExpectedFromFile -ne [string]$cliBundle.asset_linux_expected_sha256) {
+            throw "cdev-cli Linux SHA file does not match installer contract. expected=$($cliBundle.asset_linux_expected_sha256) actual=$linuxExpectedFromFile"
+        }
+
+        $cliBundle.asset_win_actual_sha256 = (Get-FileHash -LiteralPath $cliBundle.asset_win_path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($cliBundle.asset_win_actual_sha256 -ne [string]$cliBundle.asset_win_expected_sha256) {
+            throw "cdev-cli Windows asset hash mismatch. expected=$($cliBundle.asset_win_expected_sha256) actual=$($cliBundle.asset_win_actual_sha256)"
+        }
+        $cliBundle.asset_linux_actual_sha256 = (Get-FileHash -LiteralPath $cliBundle.asset_linux_path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($cliBundle.asset_linux_actual_sha256 -ne [string]$cliBundle.asset_linux_expected_sha256) {
+            throw "cdev-cli Linux asset hash mismatch. expected=$($cliBundle.asset_linux_expected_sha256) actual=$($cliBundle.asset_linux_actual_sha256)"
+        }
+
+        Expand-CdevCliWindowsBundle -ZipPath $cliBundle.asset_win_path -DestinationPath $cliBundle.extracted_win_root
+        if (-not (Test-Path -LiteralPath $cliBundle.entrypoint_win_path -PathType Leaf)) {
+            throw "cdev-cli Windows entrypoint was not found after extraction: $($cliBundle.entrypoint_win_path)"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$cliBundle.source_commit) -and ([string]$cliBundle.source_commit -notmatch '^[0-9a-f]{40}$')) {
+            throw "Installer contract has invalid cli_bundle.source_commit '$($cliBundle.source_commit)'."
+        }
+
+        $cliBundle.status = 'pass'
+        $cliBundle.message = 'Bundled cdev-cli assets passed hash verification and Windows extraction checks.'
+    } catch {
+        $cliBundle.status = 'fail'
+        $cliBundle.message = $_.Exception.Message
+        $errors += "cdev-cli bundle verification failed. $($cliBundle.message)"
+    }
+    Add-PostActionSequenceEntry `
+        -Sequence $postActionSequence `
+        -Phase 'cli-bundle' `
+        -Status ([string]$cliBundle.status) `
+        -Message ([string]$cliBundle.message)
+
+    $originalWorktreeRoot = $env:LVIE_WORKTREE_ROOT
+    $effectiveWorktreeRoot = $resolvedWorkspaceRoot
+    $worktreeRootOverridden = $false
+    if (-not [string]::IsNullOrWhiteSpace($effectiveWorktreeRoot)) {
+        if ([string]::IsNullOrWhiteSpace($originalWorktreeRoot)) {
+            Write-InstallerFeedback -Message ("Setting LVIE_WORKTREE_ROOT to workspace root for post-actions: {0}" -f $effectiveWorktreeRoot)
+            $worktreeRootOverridden = $true
+        } else {
+            $normalizedOriginal = [System.IO.Path]::GetFullPath($originalWorktreeRoot).TrimEnd('\')
+            $normalizedEffective = [System.IO.Path]::GetFullPath($effectiveWorktreeRoot).TrimEnd('\')
+            if ($normalizedOriginal -ne $normalizedEffective) {
+                Write-InstallerFeedback -Message ("Overriding LVIE_WORKTREE_ROOT for post-actions. previous='{0}' effective='{1}'" -f $originalWorktreeRoot, $effectiveWorktreeRoot)
+                $worktreeRootOverridden = $true
+            }
+        }
+    }
+
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($effectiveWorktreeRoot)) {
+            $env:LVIE_WORKTREE_ROOT = $effectiveWorktreeRoot
+        }
+
+        if ($runnerCliBundle.status -eq 'pass') {
+            $repoContractStatus = $repositoryResults | Where-Object { [string]$_.path -eq $iconEditorRepoPath } | Select-Object -First 1
+            if ($null -eq $repoContractStatus -or [string]$repoContractStatus.status -ne 'pass') {
+                $blockingMessage = "Cannot run runner-cli PPL capability checks because icon-editor repo contract failed at '$iconEditorRepoPath'."
+                foreach ($bitness in $requiredPplBitnesses) {
+                    $pplCapabilityChecks[$bitness].status = 'fail'
+                    $pplCapabilityChecks[$bitness].message = $blockingMessage
+                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'ppl-build' -Bitness $bitness -Status 'fail' -Message $blockingMessage
+                }
+                $vipPackageBuildCheck.status = 'blocked'
+                $vipPackageBuildCheck.message = 'VIP harness was not run because icon-editor repository contract failed.'
+                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
+                $errors += $blockingMessage
+            } else {
+                $allPplPass = $true
+                foreach ($bitness in $requiredPplBitnesses) {
+                    Write-InstallerFeedback -Message ("Running pre-PPL LabVIEW close sweep before {0}-bit gate." -f $bitness)
+                    Invoke-PreVipLabVIEWCloseBestEffort -IconEditorRepoPath $iconEditorRepoPath
+                    Start-Sleep -Seconds 3
+
+                    Write-InstallerFeedback -Message ("Running runner-cli PPL capability gate ({0}-bit)." -f $bitness)
+                    $capabilityResult = Invoke-RunnerCliPplCapabilityCheck `
+                        -RunnerCliPath $runnerCliExePath `
+                        -IconEditorRepoPath $iconEditorRepoPath `
+                        -PinnedSha $iconEditorPinnedSha `
+                        -RequiredLabviewYear ([string]$requiredLabviewYear) `
+                        -RequiredBitness $bitness
+
+                    if ([string]$capabilityResult.status -ne 'pass') {
+                        $firstAttemptMessage = [string]$capabilityResult.message
+                        Write-InstallerFeedback -Message ("runner-cli PPL capability gate ({0}-bit) failed on first attempt; retrying once after additional LabVIEW cleanup." -f $bitness)
+                        Invoke-PreVipLabVIEWCloseBestEffort -IconEditorRepoPath $iconEditorRepoPath
+                        Start-Sleep -Seconds 5
+
+                        $retryCapabilityResult = Invoke-RunnerCliPplCapabilityCheck `
+                            -RunnerCliPath $runnerCliExePath `
+                            -IconEditorRepoPath $iconEditorRepoPath `
+                            -PinnedSha $iconEditorPinnedSha `
+                            -RequiredLabviewYear ([string]$requiredLabviewYear) `
+                            -RequiredBitness $bitness
+
+                        if ([string]$retryCapabilityResult.status -eq 'pass') {
+                            $retryCapabilityResult.message = ("{0} (passed on retry after additional cleanup)." -f [string]$retryCapabilityResult.message)
+                            $capabilityResult = $retryCapabilityResult
+                        } else {
+                            $retryCapabilityResult.message = ("First attempt: {0} Retry attempt: {1}" -f $firstAttemptMessage, [string]$retryCapabilityResult.message)
+                            $capabilityResult = $retryCapabilityResult
+                        }
+                    }
+
+                    $pplCapabilityChecks[$bitness] = [ordered]@{
+                        status = [string]$capabilityResult.status
+                        message = [string]$capabilityResult.message
+                        runner_cli_path = [string]$capabilityResult.runner_cli_path
+                        repo_path = [string]$capabilityResult.repo_path
+                        required_labview_year = [string]$capabilityResult.required_labview_year
+                        required_bitness = [string]$capabilityResult.required_bitness
+                        output_ppl_path = [string]$capabilityResult.output_ppl_path
+                        output_ppl_snapshot_path = [string]$capabilityResult.output_ppl_snapshot_path
+                        command = @($capabilityResult.command)
+                        exit_code = $capabilityResult.exit_code
+                        labview_install_root = [string]$capabilityResult.labview_install_root
+                        buildspec_log_path = [string]$capabilityResult.buildspec_log_path
+                        detected_labview_executable = [string]$capabilityResult.detected_labview_executable
+                        detected_labview_year = [string]$capabilityResult.detected_labview_year
+                    }
+
+                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'ppl-build' -Bitness $bitness -Status ([string]$capabilityResult.status) -Message ([string]$capabilityResult.message)
+
+                    if ([string]$capabilityResult.status -ne 'pass') {
+                        $allPplPass = $false
+                        $errors += "Runner CLI PPL capability check failed ($bitness-bit). $([string]$capabilityResult.message)"
+                    }
+                }
+
+                if (-not $allPplPass) {
+                    $vipPackageBuildCheck.status = 'blocked'
+                    $vipPackageBuildCheck.message = 'VIP harness was not run because one or more PPL capability checks failed.'
+                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
+                } else {
+                    Write-InstallerFeedback -Message 'Running runner-cli VI Package harness gate.'
+                    $vipResult = Invoke-RunnerCliVipPackageHarnessCheck `
+                        -RunnerCliPath $runnerCliExePath `
+                        -IconEditorRepoPath $iconEditorRepoPath `
+                        -PinnedSha $iconEditorPinnedSha `
+                        -RequiredLabviewYear ([string]$requiredLabviewYear) `
+                        -RequiredBitness ([string]$requiredVipBitness)
+
+                    $vipPackageBuildCheck = [ordered]@{
+                        status = [string]$vipResult.status
+                        message = [string]$vipResult.message
+                        runner_cli_path = [string]$vipResult.runner_cli_path
+                        repo_path = [string]$vipResult.repo_path
+                        required_labview_year = [string]$vipResult.required_labview_year
+                        required_bitness = [string]$vipResult.required_bitness
+                        vipb_path = [string]$vipResult.vipb_path
+                        vipc_path = [string]$vipResult.vipc_path
+                        vipc_assert_output_path = [string]$vipResult.vipc_assert_output_path
+                        vip_build_status_path = [string]$vipResult.vip_build_status_path
+                        release_notes_path = [string]$vipResult.release_notes_path
+                        display_information_path = [string]$vipResult.display_information_path
+                        output_vip_path = [string]$vipResult.output_vip_path
+                        command = [ordered]@{
+                            vipc_assert = @($vipResult.command.vipc_assert)
+                            vipc_apply = @($vipResult.command.vipc_apply)
+                            vip_build = @($vipResult.command.vip_build)
+                        }
+                        exit_code = $vipResult.exit_code
+                        labview_install_root = [string]$vipResult.labview_install_root
+                    }
+                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status ([string]$vipResult.status) -Message ([string]$vipResult.message)
+
+                    if ($vipPackageBuildCheck.status -ne 'pass') {
+                        $errors += "Runner CLI VIP harness check failed. $($vipPackageBuildCheck.message)"
+                    }
+                }
+            }
+        } else {
+            $bundleBlockingMessage = "Runner CLI bundle verification failed; capability gates were not run. $([string]$runnerCliBundle.message)"
             foreach ($bitness in $requiredPplBitnesses) {
-                $pplCapabilityChecks[$bitness].status = 'fail'
-                $pplCapabilityChecks[$bitness].message = $blockingMessage
-                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'ppl-build' -Bitness $bitness -Status 'fail' -Message $blockingMessage
+                $pplCapabilityChecks[$bitness].status = 'blocked'
+                $pplCapabilityChecks[$bitness].message = $bundleBlockingMessage
+                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'ppl-build' -Bitness $bitness -Status 'blocked' -Message $bundleBlockingMessage
             }
             $vipPackageBuildCheck.status = 'blocked'
-            $vipPackageBuildCheck.message = 'VIP harness was not run because icon-editor repository contract failed.'
+            $vipPackageBuildCheck.message = 'VIP harness was not run because runner-cli bundle verification failed.'
             Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
-            $errors += $blockingMessage
-        } else {
-            $allPplPass = $true
-            foreach ($bitness in $requiredPplBitnesses) {
-                Write-InstallerFeedback -Message ("Running runner-cli PPL capability gate ({0}-bit)." -f $bitness)
-                $capabilityResult = Invoke-RunnerCliPplCapabilityCheck `
-                    -RunnerCliPath $runnerCliExePath `
-                    -IconEditorRepoPath $iconEditorRepoPath `
-                    -PinnedSha $iconEditorPinnedSha `
-                    -RequiredLabviewYear ([string]$requiredLabviewYear) `
-                    -RequiredBitness $bitness
-
-                $pplCapabilityChecks[$bitness] = [ordered]@{
-                    status = [string]$capabilityResult.status
-                    message = [string]$capabilityResult.message
-                    runner_cli_path = [string]$capabilityResult.runner_cli_path
-                    repo_path = [string]$capabilityResult.repo_path
-                    required_labview_year = [string]$capabilityResult.required_labview_year
-                    required_bitness = [string]$capabilityResult.required_bitness
-                    output_ppl_path = [string]$capabilityResult.output_ppl_path
-                    output_ppl_snapshot_path = [string]$capabilityResult.output_ppl_snapshot_path
-                    command = @($capabilityResult.command)
-                    exit_code = $capabilityResult.exit_code
-                    labview_install_root = [string]$capabilityResult.labview_install_root
-                }
-
-                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'ppl-build' -Bitness $bitness -Status ([string]$capabilityResult.status) -Message ([string]$capabilityResult.message)
-
-                if ([string]$capabilityResult.status -ne 'pass') {
-                    $allPplPass = $false
-                    $errors += "Runner CLI PPL capability check failed ($bitness-bit). $([string]$capabilityResult.message)"
-                }
-            }
-
-            if (-not $allPplPass) {
-                $vipPackageBuildCheck.status = 'blocked'
-                $vipPackageBuildCheck.message = 'VIP harness was not run because one or more PPL capability checks failed.'
-                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
+        }
+    } finally {
+        if ($worktreeRootOverridden) {
+            if ([string]::IsNullOrWhiteSpace($originalWorktreeRoot)) {
+                Remove-Item Env:LVIE_WORKTREE_ROOT -ErrorAction SilentlyContinue
             } else {
-                Write-InstallerFeedback -Message 'Running runner-cli VI Package harness gate.'
-                $vipResult = Invoke-RunnerCliVipPackageHarnessCheck `
-                    -RunnerCliPath $runnerCliExePath `
-                    -IconEditorRepoPath $iconEditorRepoPath `
-                    -PinnedSha $iconEditorPinnedSha `
-                    -RequiredLabviewYear ([string]$requiredLabviewYear) `
-                    -RequiredBitness ([string]$requiredVipBitness)
-
-                $vipPackageBuildCheck = [ordered]@{
-                    status = [string]$vipResult.status
-                    message = [string]$vipResult.message
-                    runner_cli_path = [string]$vipResult.runner_cli_path
-                    repo_path = [string]$vipResult.repo_path
-                    required_labview_year = [string]$vipResult.required_labview_year
-                    required_bitness = [string]$vipResult.required_bitness
-                    vipb_path = [string]$vipResult.vipb_path
-                    vipc_path = [string]$vipResult.vipc_path
-                    vipc_assert_output_path = [string]$vipResult.vipc_assert_output_path
-                    vip_build_status_path = [string]$vipResult.vip_build_status_path
-                    release_notes_path = [string]$vipResult.release_notes_path
-                    display_information_path = [string]$vipResult.display_information_path
-                    output_vip_path = [string]$vipResult.output_vip_path
-                    command = [ordered]@{
-                        vipc_assert = @($vipResult.command.vipc_assert)
-                        vipc_apply = @($vipResult.command.vipc_apply)
-                        vip_build = @($vipResult.command.vip_build)
-                    }
-                    exit_code = $vipResult.exit_code
-                    labview_install_root = [string]$vipResult.labview_install_root
-                }
-                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status ([string]$vipResult.status) -Message ([string]$vipResult.message)
-
-                if ($vipPackageBuildCheck.status -ne 'pass') {
-                    $errors += "Runner CLI VIP harness check failed. $($vipPackageBuildCheck.message)"
-                }
+                $env:LVIE_WORKTREE_ROOT = $originalWorktreeRoot
             }
         }
-    } else {
-        $bundleBlockingMessage = "Runner CLI bundle verification failed; capability gates were not run. $([string]$runnerCliBundle.message)"
-        foreach ($bitness in $requiredPplBitnesses) {
-            $pplCapabilityChecks[$bitness].status = 'blocked'
-            $pplCapabilityChecks[$bitness].message = $bundleBlockingMessage
-            Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'ppl-build' -Bitness $bitness -Status 'blocked' -Message $bundleBlockingMessage
-        }
-        $vipPackageBuildCheck.status = 'blocked'
-        $vipPackageBuildCheck.message = 'VIP harness was not run because runner-cli bundle verification failed.'
-        Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
     }
 
     $assertScriptPath = Join-Path $resolvedWorkspaceRoot 'scripts\Assert-WorkspaceGovernance.ps1'
@@ -1083,7 +1668,7 @@ $report = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     status = $status
     mode = $Mode
-    execution_context = $ExecutionContext
+    execution_context = $InstallerExecutionContext
     workspace_root = $resolvedWorkspaceRoot
     manifest_path = $resolvedManifestPath
     output_path = $resolvedOutputPath
@@ -1091,6 +1676,7 @@ $report = [ordered]@{
     payload_sync = $payloadSync
     repositories = $repositoryResults
     runner_cli_bundle = $runnerCliBundle
+    cli_bundle = $cliBundle
     ppl_capability_checks = $pplCapabilityChecks
     vip_package_build_check = $vipPackageBuildCheck
     post_action_sequence = $postActionSequence

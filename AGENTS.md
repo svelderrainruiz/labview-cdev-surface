@@ -11,6 +11,18 @@ This repository is the canonical policy and manifest surface for deterministic `
 - `.github/workflows/workspace-sha-drift-signal.yml` is the drift signal workflow.
 - `.github/workflows/workspace-sha-refresh-pr.yml` is the auto-PR SHA refresh workflow.
 
+## CLI Orchestration Contract
+- Preferred operator interface is `Invoke-CdevCli.ps1` from the bundled cdev CLI payload.
+- Required CLI command surface (stable tokens):
+  - `repos doctor`
+  - `installer exercise`
+  - `postactions collect`
+  - `linux deploy-ni`
+- Linux deploy defaults must stay documented as:
+  - Docker context `desktop-linux`
+  - Image `nationalinstruments/labview:latest-linux`
+- Direct script entrypoints remain supported for fallback and debugging, but policy/docs/tests must stay CLI-first.
+
 ## Safety Rules
 - Do not relax fork/org mutation restrictions encoded in `workspace-governance.json`.
 - Do not mutate governed default branches directly when branch-protection contracts are missing.
@@ -82,7 +94,7 @@ This repository is the canonical policy and manifest surface for deterministic `
   - `runner-cli ppl build` on 32-bit LabVIEW 2020.
   - `runner-cli ppl build` on 64-bit LabVIEW 2020.
   - `runner-cli vipc assert/apply/assert` and `runner-cli vip build` on 64-bit LabVIEW 2020.
-- Installer runtime must require `-ExecutionContext NsisInstall` (or explicit local exercise context) for authoritative post-actions in `Install` mode.
+- Installer runtime must require `-InstallerExecutionContext NsisInstall` (or explicit local exercise context) for authoritative post-actions in `Install` mode.
 - Installer runtime must surface phase-level terminal feedback (clone, payload sync, runner-cli validation, PPL gate, VIP harness gate, governance audit).
 - Installer runtime report must emit `ppl_capability_checks` (per bitness) and ordered `post_action_sequence` evidence.
 - Branch-protection-only governance failures remain audit-only; runner-cli/PPL/VIP capability failures are hard-stop failures.
@@ -104,6 +116,35 @@ This repository is the canonical policy and manifest surface for deterministic `
 ## Canary Policy
 - `nightly-supplychain-canary.yml` is the scheduled drift and reproducibility signal.
 - Canary failures must update a single tracking issue; do not disable canary to bypass failures.
+
+## Integration Gate Policy
+- `.github/workflows/integration-gate.yml` is the integration-branch aggregator workflow.
+- It must gate on required contexts: `CI Pipeline`, `Workspace Installer Contract`, `Reproducibility Contract`, `Provenance Contract`.
+- Keep this as a distinct check context (`Integration Gate`) for branch-protection phase-in after promotion criteria are met.
+
+## Installer Harness Execution Contract
+- `.github/workflows/installer-harness-self-hosted.yml` is the authoritative self-hosted installer harness workflow.
+- Trigger path is `integration/*` branch push with `workflow_dispatch` fallback for targeted refs.
+- Required runner labels: `self-hosted`, `windows`, `self-hosted-windows-lv`, `installer-harness`.
+- Canonical runner roots for this machine:
+  - `C:\actions-runner-cdev`
+  - `C:\actions-runner-cdev-2`
+  - `C:\actions-runner-cdev-harness2`
+- Service-runner account remains `NT AUTHORITY\NETWORK SERVICE`; harness jobs may run on the interactive runner label and are validated via `-AllowInteractiveRunner`.
+- The workflow must run baseline + machine preflight before executing the installer harness iteration:
+  - `scripts/Assert-InstallerHarnessRunnerBaseline.ps1`
+  - `scripts/Assert-InstallerHarnessMachinePreflight.ps1`
+- Required report artifacts:
+  - `iteration-summary.json`
+  - `exercise-report.json`
+  - `C:\dev-smoke-lvie\artifacts\workspace-install-latest.json`
+  - `lvie-cdev-workspace-installer-bundle.zip`
+  - `harness-validation-report.json`
+- Required post-action pass checks in smoke report:
+  - `ppl_capability_checks.32`
+  - `ppl_capability_checks.64`
+  - `vip_package_build_check`
+- Promotion policy: keep `Installer Harness` non-required until 3 consecutive integration green runs and at least 1 workflow_dispatch green run, then promote to required context.
 
 ## Local Iteration Contract
 - Refine NSIS flow locally first on machines with NSIS installed.

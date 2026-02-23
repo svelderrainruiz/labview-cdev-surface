@@ -180,29 +180,65 @@ if (-not $SkipSmokeBuild) {
 
 $releaseSha = Write-Sha256File -FilePath $releaseInstallerPath -OutputPath $releaseShaPath
 $smokeReportPath = Join-Path $resolvedSmokeRoot 'artifacts\workspace-install-latest.json'
+$smokeLaunchLogPath = Join-Path $resolvedSmokeRoot 'artifacts\workspace-installer-launch.log'
 $smokeStatus = if ($SkipSmokeBuild) { 'build_skipped' } elseif ($SkipSmokeInstall) { 'install_skipped' } else { 'pending' }
 $smokeExitCode = $null
+$smokeErrorMessage = ''
+$smokeReportStatus = ''
+$smokeReportErrors = @()
+$smokeReportWarnings = @()
 
 if ((-not $SkipSmokeInstall) -and (-not $SkipSmokeBuild)) {
-    if ((Test-Path -LiteralPath $resolvedSmokeRoot -PathType Container) -and (-not $KeepSmokeWorkspace)) {
-        Remove-Item -LiteralPath $resolvedSmokeRoot -Recurse -Force
-    }
-    Ensure-Directory -Path $resolvedSmokeRoot
+    try {
+        if ((Test-Path -LiteralPath $resolvedSmokeRoot -PathType Container) -and (-not $KeepSmokeWorkspace)) {
+            Remove-Item -LiteralPath $resolvedSmokeRoot -Recurse -Force
+        }
+        Ensure-Directory -Path $resolvedSmokeRoot
 
-    $smokeProcess = Start-Process -FilePath $smokeInstallerPath -ArgumentList '/S' -Wait -PassThru
-    $smokeExitCode = $smokeProcess.ExitCode
-    if ($smokeExitCode -ne 0) {
-        throw "Smoke installer failed with exit code $smokeExitCode"
-    }
+        & $smokeInstallerPath '/S' | Out-Host
+        $smokeExitCode = $LASTEXITCODE
+        if ($smokeExitCode -ne 0) {
+            throw "Smoke installer failed with exit code $smokeExitCode"
+        }
 
-    if (-not (Test-Path -LiteralPath $smokeReportPath -PathType Leaf)) {
-        throw "Smoke install report not found: $smokeReportPath"
-    }
+        if (-not (Test-Path -LiteralPath $smokeReportPath -PathType Leaf)) {
+            throw "Smoke install report not found: $smokeReportPath"
+        }
 
-    $smokeInstallReport = Get-Content -LiteralPath $smokeReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
-    $smokeStatus = [string]$smokeInstallReport.status
-    if ($smokeStatus -ne 'succeeded') {
-        throw "Smoke install report status is '$smokeStatus' (expected 'succeeded')."
+        $smokeInstallReport = Get-Content -LiteralPath $smokeReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $smokeReportStatus = [string]$smokeInstallReport.status
+        $smokeReportErrors = @($smokeInstallReport.errors)
+        $smokeReportWarnings = @($smokeInstallReport.warnings)
+        $smokeStatus = $smokeReportStatus
+        if ($smokeStatus -ne 'succeeded') {
+            throw "Smoke install report status is '$smokeStatus' (expected 'succeeded')."
+        }
+    } catch {
+        if ($null -eq $smokeExitCode) {
+            $smokeExitCode = 1
+        }
+        $smokeStatus = 'failed'
+        $smokeErrorMessage = $_.Exception.Message
+
+        if (Test-Path -LiteralPath $smokeLaunchLogPath -PathType Leaf) {
+            try {
+                $smokeReportWarnings += "NSIS launch log found: $smokeLaunchLogPath"
+                $smokeReportErrors += (Get-Content -LiteralPath $smokeLaunchLogPath -Raw)
+            } catch {
+                $smokeReportWarnings += "Unable to read NSIS launch log: $($_.Exception.Message)"
+            }
+        }
+
+        if (Test-Path -LiteralPath $smokeReportPath -PathType Leaf) {
+            try {
+                $smokeInstallReport = Get-Content -LiteralPath $smokeReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                $smokeReportStatus = [string]$smokeInstallReport.status
+                $smokeReportErrors = @($smokeInstallReport.errors)
+                $smokeReportWarnings = @($smokeInstallReport.warnings)
+            } catch {
+                $smokeReportErrors += "Failed to parse smoke install report: $($_.Exception.Message)"
+            }
+        }
     }
 }
 
@@ -284,6 +320,11 @@ $report = [ordered]@{
         status = $smokeStatus
         exit_code = $smokeExitCode
         report_path = $smokeReportPath
+        launch_log_path = $smokeLaunchLogPath
+        error_message = $smokeErrorMessage
+        report_status = $smokeReportStatus
+        report_errors = @($smokeReportErrors)
+        report_warnings = @($smokeReportWarnings)
     }
     bundle = [ordered]@{
         root = $bundleRoot
@@ -298,3 +339,7 @@ Write-Host "Release installer sha256: $releaseSha"
 Write-Host "Bundle zip: $bundleZipPath"
 Write-Host "Bundle zip sha256: $bundleZipSha"
 Write-Host "Exercise report: $reportPath"
+
+if (-not [string]::IsNullOrWhiteSpace($smokeErrorMessage)) {
+    throw $smokeErrorMessage
+}
