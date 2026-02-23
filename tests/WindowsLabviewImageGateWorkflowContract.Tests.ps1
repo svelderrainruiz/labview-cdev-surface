@@ -30,11 +30,13 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:workflowContent | Should -Match "required_year = '2026'"
         $script:workflowContent | Should -Match "required_ppl_bitnesses = @\('64'\)"
         $script:workflowContent | Should -Match 'LVIE_INSTALLER_CONTAINER_MODE = "1"'
+        $script:workflowContent | Should -Match 'LVIE_SKIP_VIP_HARNESS = "1"'
         $script:workflowContent | Should -Match 'Unblock-File -LiteralPath "C:\\workspace\\artifacts\\windows-image-gate\\lvie-cdev-workspace-installer\.exe"'
         $script:workflowContent | Should -Match 'workspace-install-latest\.json'
         $script:workflowContent | Should -Match 'No PPL capability checks executed'
         $script:workflowContent | Should -Match 'ppl_statuses = \$pplStatuses'
         $script:workflowContent | Should -Match 'vip_package_build_check\.status'
+        $script:workflowContent | Should -Match 'VIP gate skipped by policy'
     }
 
     It 'publishes gate artifacts for troubleshooting' {

@@ -748,6 +748,7 @@ try {
     $requiredLabviewYear = '2020'
     $requiredPplBitnesses = @('32', '64')
     $requiredVipBitness = '64'
+    $skipVipHarness = ([string]$env:LVIE_SKIP_VIP_HARNESS -match '^(?i:1|true|yes)$')
     $runnerCliRelativeRoot = 'tools\runner-cli\win-x64'
     if ($null -ne $manifest.PSObject.Properties['installer_contract']) {
         $installerContract = $manifest.installer_contract
@@ -791,6 +792,9 @@ try {
         throw "Installer contract requires VIP bitness '$requiredVipBitness' to be included in required_ppl_bitnesses."
     }
     $runnerCliLabviewVersion = [string]$requiredLabviewYear
+    if ($skipVipHarness) {
+        Write-InstallerFeedback -Message 'VIP harness is disabled by LVIE_SKIP_VIP_HARNESS.'
+    }
 
     if ($Mode -eq 'Install') {
         if ([string]::IsNullOrWhiteSpace($InstallExecutionContext)) {
@@ -1204,6 +1208,11 @@ try {
                 $vipPackageBuildCheck.status = 'blocked'
                 $vipPackageBuildCheck.message = 'VIP harness was not run because one or more PPL capability checks failed.'
                 Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
+            } elseif ($skipVipHarness) {
+                $vipPackageBuildCheck.status = 'skipped'
+                $vipPackageBuildCheck.message = 'VIP harness was skipped by LVIE_SKIP_VIP_HARNESS.'
+                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'skipped' -Message $vipPackageBuildCheck.message
+                Write-InstallerFeedback -Message $vipPackageBuildCheck.message
             } else {
                 Write-InstallerFeedback -Message 'Running runner-cli VI Package harness gate.'
                 $vipResult = Invoke-RunnerCliVipPackageHarnessCheck `

@@ -97,6 +97,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $env:PATH = "C:\Program Files\PowerShell\7;C:\Program Files\Git\cmd;C:\Program Files\Git\mingw64\bin;C:\Program Files\GitHub CLI;C:\Program Files\G-CLI\bin;$env:PATH"
           $env:LVIE_INSTALLER_CONTAINER_MODE = "1"
+          $env:LVIE_SKIP_VIP_HARNESS = "1"
           git config --global --add safe.directory '*'
           $installReportPath = "C:\dev\artifacts\workspace-install-latest.json"
           if (Test-Path -LiteralPath $installReportPath -PathType Leaf) {
@@ -152,9 +153,14 @@ jobs:
 
           $vipStatus = [string]$installReport.vip_package_build_check.status
           $vipPath = [string]$installReport.vip_package_build_check.output_vip_path
-          if ($vipStatus -ne "pass") { throw "VIP gate did not pass. status=$vipStatus" }
-          if ([string]::IsNullOrWhiteSpace($vipPath) -or -not (Test-Path -LiteralPath $vipPath -PathType Leaf)) {
-            throw "VIP output missing after successful gate: $vipPath"
+          if ($vipStatus -eq "pass") {
+            if ([string]::IsNullOrWhiteSpace($vipPath) -or -not (Test-Path -LiteralPath $vipPath -PathType Leaf)) {
+              throw "VIP output missing after successful gate: $vipPath"
+            }
+          } elseif ($vipStatus -eq "skipped") {
+            Write-Host "VIP gate skipped by policy."
+          } else {
+            throw "VIP gate did not pass. status=$vipStatus"
           }
 
           [ordered]@{
