@@ -62,7 +62,7 @@ jobs:
             -Repository '${{ github.repository }}' `
             -RunnerRoots @($activeRunnerRoot) `
             -AllowInteractiveRunner `
-            -RequiredLabels @('self-hosted','windows','self-hosted-windows-lv','installer-harness') `
+            -RequiredLabels 'self-hosted,windows,self-hosted-windows-lv,installer-harness' `
             -OutputPath $reportPath
           if ($LASTEXITCODE -ne 0) {
             if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
