@@ -62,7 +62,7 @@ function Stage-Payload {
     Ensure-Directory -Path $PayloadRoot
     Copy-Item -Path (Join-Path $canonicalPayloadRoot '*') -Destination $PayloadRoot -Recurse -Force
     Ensure-Directory -Path (Join-Path $PayloadRoot 'scripts')
-    Ensure-Directory -Path (Join-Path $PayloadRoot 'tools\runner-cli\win-x64')
+    Ensure-Directory -Path (Join-Path $PayloadRoot 'workspace-governance\tools\runner-cli\win-x64')
 
     Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts\Install-WorkspaceFromManifest.ps1') -Destination (Join-Path $PayloadRoot 'scripts\Install-WorkspaceFromManifest.ps1') -Force
 }
@@ -137,7 +137,7 @@ if (Test-Path -LiteralPath $smokePayload -PathType Container) { Remove-Item -Lit
 Stage-Payload -RepoRoot $repoRoot -PayloadRoot $canonicalPayload
 & $bundleRunnerCliScript `
     -ManifestPath (Join-Path $canonicalPayload 'workspace-governance\workspace-governance.json') `
-    -OutputRoot (Join-Path $canonicalPayload 'tools\runner-cli\win-x64') `
+    -OutputRoot (Join-Path $canonicalPayload 'workspace-governance\tools\runner-cli\win-x64') `
     -RepoName 'labview-icon-editor' `
     -Runtime 'win-x64'
 if ($LASTEXITCODE -ne 0) {
@@ -146,11 +146,11 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not $SkipSmokeBuild) {
     Stage-Payload -RepoRoot $repoRoot -PayloadRoot $smokePayload
-    $runnerCliPayloadRoot = Join-Path $canonicalPayload 'tools\runner-cli\win-x64'
+    $runnerCliPayloadRoot = Join-Path $canonicalPayload 'workspace-governance\tools\runner-cli\win-x64'
     foreach ($runnerCliFile in @('runner-cli.exe', 'runner-cli.exe.sha256', 'runner-cli.metadata.json')) {
         Copy-Item `
             -LiteralPath (Join-Path $runnerCliPayloadRoot $runnerCliFile) `
-            -Destination (Join-Path $smokePayload 'tools\runner-cli\win-x64') `
+            -Destination (Join-Path $smokePayload 'workspace-governance\tools\runner-cli\win-x64') `
             -Force
     }
     Convert-ManifestToWorkspace -ManifestPath (Join-Path $smokePayload 'workspace-governance\workspace-governance.json') -WorkspaceRoot $resolvedSmokeRoot

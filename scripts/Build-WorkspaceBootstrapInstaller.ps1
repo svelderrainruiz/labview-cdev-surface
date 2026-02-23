@@ -85,8 +85,16 @@ function Resolve-SourceDateEpoch {
         return [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     }
 
-    $metadataPath = Join-Path $PayloadRoot 'tools\runner-cli\win-x64\runner-cli.metadata.json'
-    if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
+    $metadataCandidates = @(
+        (Join-Path $PayloadRoot 'tools\runner-cli\win-x64\runner-cli.metadata.json'),
+        (Join-Path $PayloadRoot 'workspace-governance\tools\runner-cli\win-x64\runner-cli.metadata.json')
+    )
+
+    foreach ($metadataPath in $metadataCandidates) {
+        if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+            continue
+        }
+
         try {
             $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json -ErrorAction Stop
             $epoch = 0L
