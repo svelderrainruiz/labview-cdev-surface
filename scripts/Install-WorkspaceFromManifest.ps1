@@ -513,6 +513,11 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             vipc_apply = @()
             vip_build = @()
         }
+        command_output = [ordered]@{
+            vipc_assert = @()
+            vipc_apply = @()
+            vip_build = @()
+        }
         exit_code = $null
         labview_install_root = ''
     }
@@ -579,7 +584,8 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         Set-RunnerCliPreflightEnvironment `
             -RunnerCliPath $RunnerCliPath `
             -WorktreeRoot (Split-Path -Parent $IconEditorRepoPath)
-        & $RunnerCliPath @vipcAssertArgs
+        $vipcAssertOutput = & $RunnerCliPath @vipcAssertArgs 2>&1
+        $result.command_output.vipc_assert = @($vipcAssertOutput | ForEach-Object { [string]$_ })
         $vipcAssertExit = $LASTEXITCODE
         if ($vipcAssertExit -ne 0) {
             $vipcApplyArgs = @(
@@ -592,15 +598,21 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             )
             $result.command.vipc_apply = @($vipcApplyArgs)
             Write-InstallerFeedback -Message 'VIPC assert reported dependency drift; applying VIPC dependencies.'
-            & $RunnerCliPath @vipcApplyArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "runner-cli vipc apply failed with exit code $LASTEXITCODE."
+            $vipcApplyOutput = & $RunnerCliPath @vipcApplyArgs 2>&1
+            $result.command_output.vipc_apply = @($vipcApplyOutput | ForEach-Object { [string]$_ })
+            $vipcApplyExit = $LASTEXITCODE
+            if ($vipcApplyExit -ne 0) {
+                $applySummary = [string]::Join(' | ', @($result.command_output.vipc_apply | Select-Object -First 20))
+                throw "runner-cli vipc apply failed with exit code $vipcApplyExit. Output: $applySummary"
             }
 
             Write-InstallerFeedback -Message 'Re-running runner-cli vipc assert after apply.'
-            & $RunnerCliPath @vipcAssertArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "runner-cli vipc assert failed after apply with exit code $LASTEXITCODE."
+            $vipcAssertAfterApplyOutput = & $RunnerCliPath @vipcAssertArgs 2>&1
+            $result.command_output.vipc_assert += @($vipcAssertAfterApplyOutput | ForEach-Object { [string]$_ })
+            $vipcAssertAfterApplyExit = $LASTEXITCODE
+            if ($vipcAssertAfterApplyExit -ne 0) {
+                $assertSummary = [string]::Join(' | ', @($result.command_output.vipc_assert | Select-Object -First 20))
+                throw "runner-cli vipc assert failed after apply with exit code $vipcAssertAfterApplyExit. Output: $assertSummary"
             }
         }
 
@@ -625,10 +637,12 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         )
         $result.command.vip_build = @($vipBuildArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vip build.'
-        & $RunnerCliPath @vipBuildArgs
+        $vipBuildOutput = & $RunnerCliPath @vipBuildArgs 2>&1
+        $result.command_output.vip_build = @($vipBuildOutput | ForEach-Object { [string]$_ })
         $result.exit_code = $LASTEXITCODE
         if ($result.exit_code -ne 0) {
-            throw "runner-cli vip build failed with exit code $($result.exit_code)."
+            $buildSummary = [string]::Join(' | ', @($result.command_output.vip_build | Select-Object -First 20))
+            throw "runner-cli vip build failed with exit code $($result.exit_code). Output: $buildSummary"
         }
 
         $vipPath = ''
@@ -749,6 +763,11 @@ $vipPackageBuildCheck = [ordered]@{
     display_information_path = ''
     output_vip_path = ''
     command = [ordered]@{
+        vipc_assert = @()
+        vipc_apply = @()
+        vip_build = @()
+    }
+    command_output = [ordered]@{
         vipc_assert = @()
         vipc_apply = @()
         vip_build = @()
@@ -1298,6 +1317,17 @@ try {
                     -RunnerCliLabviewVersion ([string]$runnerCliLabviewVersion) `
                     -RequiredBitness ([string]$requiredVipBitness)
 
+                $vipResultHasStatus = ($null -ne $vipResult) -and ($vipResult.PSObject.Properties.Name -contains 'status')
+                if (-not $vipResultHasStatus) {
+                    $vipResultType = if ($null -eq $vipResult) { 'null' } else { $vipResult.GetType().FullName }
+                    $vipResultPreview = if ($null -eq $vipResult) {
+                        ''
+                    } else {
+                        [string]::Join(' | ', @($vipResult | Select-Object -First 5 | ForEach-Object { [string]$_ }))
+                    }
+                    throw "VIP harness returned unexpected payload type '$vipResultType'. Preview: $vipResultPreview"
+                }
+
                 $vipPackageBuildCheck = [ordered]@{
                     status = [string]$vipResult.status
                     message = [string]$vipResult.message
@@ -1317,6 +1347,11 @@ try {
                         vipc_assert = @($vipResult.command.vipc_assert)
                         vipc_apply = @($vipResult.command.vipc_apply)
                         vip_build = @($vipResult.command.vip_build)
+                    }
+                    command_output = [ordered]@{
+                        vipc_assert = @($vipResult.command_output.vipc_assert)
+                        vipc_apply = @($vipResult.command_output.vipc_apply)
+                        vip_build = @($vipResult.command_output.vip_build)
                     }
                     exit_code = $vipResult.exit_code
                     labview_install_root = [string]$vipResult.labview_install_root
@@ -1407,6 +1442,7 @@ try {
         -Message ([string]$governanceAudit.message)
 } catch {
     $errors += $_.Exception.Message
+    Write-InstallerFeedback -Message ("Unhandled installer exception: {0}" -f $_.Exception.Message)
 }
 
 $status = if ($errors.Count -gt 0) { 'failed' } else { 'succeeded' }

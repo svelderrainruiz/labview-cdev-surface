@@ -53,6 +53,7 @@ jobs:
             './tests/LinuxLabviewImageGateWorkflowContract.Tests.ps1',
             './tests/DockerDesktopLinuxIterationContract.Tests.ps1',
             './tests/WorkspaceInstallerExerciseContract.Tests.ps1',
+            './tests/WorkspaceInstallerDeveloperExperienceContract.Tests.ps1',
             './tests/WorkspaceInstallerIterationContract.Tests.ps1'
           ) -CI -Output Detailed
 

@@ -23,7 +23,11 @@ param(
     [string]$ReleaseInstallerName = 'lvie-cdev-workspace-installer.exe',
 
     [Parameter()]
-    [string]$SmokeInstallerName = 'lvie-cdev-workspace-installer-smoke.exe'
+    [string]$SmokeInstallerName = 'lvie-cdev-workspace-installer-smoke.exe',
+
+    [Parameter()]
+    [ValidateRange(60, 7200)]
+    [int]$SmokeInstallerTimeoutSeconds = 1800
 )
 
 Set-StrictMode -Version Latest
@@ -46,6 +50,90 @@ function Write-Sha256File {
     $name = Split-Path -Path $FilePath -Leaf
     "{0} *{1}" -f $hash, $name | Set-Content -LiteralPath $OutputPath -Encoding ascii
     return $hash
+}
+
+function Write-SmokeLaunchLog {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    $line = "[{0}] {1}" -f (Get-Date).ToUniversalTime().ToString('o'), $Message
+    Add-Content -LiteralPath $LogPath -Value $line -Encoding utf8
+}
+
+function Get-SmokeFailureSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SmokeReportPath
+    )
+
+    if (-not (Test-Path -LiteralPath $SmokeReportPath -PathType Leaf)) {
+        return "Smoke report not found: $SmokeReportPath"
+    }
+
+    try {
+        $report = Get-Content -LiteralPath $SmokeReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $status = [string]$report.status
+        $errors = @($report.errors | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $warnings = @($report.warnings | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $topErrors = [string]::Join(' | ', @($errors | Select-Object -First 5))
+        if ([string]::IsNullOrWhiteSpace($topErrors)) {
+            $topErrors = '<none>'
+        }
+        return ("report_status={0}; errors={1}; warnings={2}; top_errors={3}" -f $status, $errors.Count, $warnings.Count, $topErrors)
+    } catch {
+        return "Failed to parse smoke report '$SmokeReportPath': $($_.Exception.Message)"
+    }
+}
+
+function Write-SmokeTimeoutDiagnostics {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessId,
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath,
+        [Parameter(Mandatory = $true)]
+        [string]$SmokeReportPath
+    )
+
+    $process = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $ProcessId) -ErrorAction SilentlyContinue
+    $children = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ParentProcessId -eq $ProcessId })
+    $reportTail = if (Test-Path -LiteralPath $SmokeReportPath -PathType Leaf) {
+        Get-SmokeFailureSummary -SmokeReportPath $SmokeReportPath
+    } else {
+        "Smoke report not found: $SmokeReportPath"
+    }
+
+    [ordered]@{
+        timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+        smoke_installer_pid = $ProcessId
+        smoke_report_path = $SmokeReportPath
+        smoke_report_summary = $reportTail
+        process = if ($null -ne $process) {
+            [ordered]@{
+                pid = $process.ProcessId
+                parent_pid = $process.ParentProcessId
+                executable = [string]$process.ExecutablePath
+                command_line = [string]$process.CommandLine
+            }
+        } else {
+            $null
+        }
+        child_processes = @($children | ForEach-Object {
+            [ordered]@{
+                pid = $_.ProcessId
+                parent_pid = $_.ParentProcessId
+                name = [string]$_.Name
+                executable = [string]$_.ExecutablePath
+                command_line = [string]$_.CommandLine
+            }
+        })
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding utf8
+
+    return $OutputPath
 }
 
 function Stage-Payload {
@@ -188,11 +276,36 @@ if ((-not $SkipSmokeInstall) -and (-not $SkipSmokeBuild)) {
         Remove-Item -LiteralPath $resolvedSmokeRoot -Recurse -Force
     }
     Ensure-Directory -Path $resolvedSmokeRoot
+    $smokeArtifactsRoot = Join-Path $resolvedSmokeRoot 'artifacts'
+    Ensure-Directory -Path $smokeArtifactsRoot
+    $smokeLaunchLogPath = Join-Path $smokeArtifactsRoot 'workspace-installer-launch.log'
+    Set-Content -LiteralPath $smokeLaunchLogPath -Value '' -Encoding utf8
+    Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Starting smoke installer launch. installer={0}; timeout_seconds={1}; workspace_root={2}" -f $smokeInstallerPath, $SmokeInstallerTimeoutSeconds, $resolvedSmokeRoot)
 
-    $smokeProcess = Start-Process -FilePath $smokeInstallerPath -ArgumentList '/S' -Wait -PassThru
+    Write-Host ("Launching smoke installer: {0} (timeout={1}s)" -f $smokeInstallerPath, $SmokeInstallerTimeoutSeconds)
+    $smokeProcess = Start-Process -FilePath $smokeInstallerPath -ArgumentList '/S' -PassThru
+    Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke installer process started. pid={0}" -f $smokeProcess.Id)
+    if (-not $smokeProcess.WaitForExit($SmokeInstallerTimeoutSeconds * 1000)) {
+        $diagnosticsPath = Join-Path $resolvedOutputRoot 'smoke-installer-timeout-diagnostics.json'
+        $writtenPath = Write-SmokeTimeoutDiagnostics -ProcessId $smokeProcess.Id -OutputPath $diagnosticsPath -SmokeReportPath $smokeReportPath
+        Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke installer timeout reached. pid={0}; diagnostics={1}" -f $smokeProcess.Id, $writtenPath)
+        try {
+            Stop-Process -Id $smokeProcess.Id -Force -ErrorAction Stop
+            Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Timed-out smoke installer process terminated. pid={0}" -f $smokeProcess.Id)
+        } catch {
+            Write-Warning ("Failed to terminate timed-out smoke installer process {0}: {1}" -f $smokeProcess.Id, $_.Exception.Message)
+            Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Failed to terminate timed-out process pid={0}. error={1}" -f $smokeProcess.Id, $_.Exception.Message)
+        }
+        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath
+        Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke timeout summary: {0}" -f $summary)
+        throw "Smoke installer timed out after $SmokeInstallerTimeoutSeconds seconds (pid=$($smokeProcess.Id)). Diagnostics: $writtenPath. Launch log: $smokeLaunchLogPath. $summary"
+    }
     $smokeExitCode = $smokeProcess.ExitCode
+    Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke installer process exited. pid={0}; exit_code={1}" -f $smokeProcess.Id, $smokeExitCode)
     if ($smokeExitCode -ne 0) {
-        throw "Smoke installer failed with exit code $smokeExitCode"
+        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath
+        Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke installer failed. summary={0}" -f $summary)
+        throw "Smoke installer failed with exit code $smokeExitCode. Launch log: $smokeLaunchLogPath. $summary"
     }
 
     if (-not (Test-Path -LiteralPath $smokeReportPath -PathType Leaf)) {
@@ -201,8 +314,11 @@ if ((-not $SkipSmokeInstall) -and (-not $SkipSmokeBuild)) {
 
     $smokeInstallReport = Get-Content -LiteralPath $smokeReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
     $smokeStatus = [string]$smokeInstallReport.status
+    Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke install report parsed. status={0}; report={1}" -f $smokeStatus, $smokeReportPath)
     if ($smokeStatus -ne 'succeeded') {
-        throw "Smoke install report status is '$smokeStatus' (expected 'succeeded')."
+        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath
+        Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke install report indicates failure. summary={0}" -f $summary)
+        throw "Smoke install report status is '$smokeStatus' (expected 'succeeded'). Launch log: $smokeLaunchLogPath. $summary"
     }
 }
 
