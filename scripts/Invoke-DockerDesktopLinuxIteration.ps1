@@ -58,6 +58,41 @@ function Get-OptionalFeatureStateSafe {
     }
 }
 
+function Resolve-DockerContextForLinuxIteration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PreferredContext
+    )
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($PreferredContext)) {
+        $candidates += $PreferredContext
+    }
+    if ($candidates -notcontains 'default') {
+        $candidates += 'default'
+    }
+
+    foreach ($context in $candidates) {
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            & docker --context $context version *> $null
+            if ($LASTEXITCODE -eq 0) {
+                return [pscustomobject]@{
+                    context = $context
+                    attempts = $attempt
+                    fallback_used = ($context -ne $PreferredContext)
+                }
+            }
+            Start-Sleep -Seconds 3
+        }
+    }
+
+    $hyperVState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Hyper-V-All'
+    $virtualMachinePlatformState = Get-OptionalFeatureStateSafe -FeatureName 'VirtualMachinePlatform'
+    $wslState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Windows-Subsystem-Linux'
+    $contextsText = [string]::Join(', ', $candidates)
+    throw ("docker version failed for contexts '{0}'. Ensure Docker Desktop Linux mode is running. Feature states: Microsoft-Hyper-V-All={1}; VirtualMachinePlatform={2}; Microsoft-Windows-Subsystem-Linux={3}" -f $contextsText, $hyperVState, $virtualMachinePlatformState, $wslState)
+}
+
 $repoRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..')).Path
 $resolvedManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
 $resolvedOutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
@@ -85,13 +120,9 @@ if (Test-Path -LiteralPath $containerReportPath -PathType Leaf) {
     Remove-Item -LiteralPath $containerReportPath -Force
 }
 
-& docker --context $DockerContext version *> $null
-if ($LASTEXITCODE -ne 0) {
-    $hyperVState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Hyper-V-All'
-    $virtualMachinePlatformState = Get-OptionalFeatureStateSafe -FeatureName 'VirtualMachinePlatform'
-    $wslState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Windows-Subsystem-Linux'
-    throw ("docker version failed for context '{0}'. Ensure Docker Desktop Linux mode is running. Feature states: Microsoft-Hyper-V-All={1}; VirtualMachinePlatform={2}; Microsoft-Windows-Subsystem-Linux={3}" -f $DockerContext, $hyperVState, $virtualMachinePlatformState, $wslState)
-}
+$contextProbe = Resolve-DockerContextForLinuxIteration -PreferredContext $DockerContext
+$effectiveDockerContext = [string]$contextProbe.context
+Write-Host ("[docker-linux-iteration] docker context resolved: requested={0}; effective={1}; attempts={2}; fallback={3}" -f $DockerContext, $effectiveDockerContext, [int]$contextProbe.attempts, [bool]$contextProbe.fallback_used)
 
 & pwsh -NoProfile -File $bundleScript -ManifestPath $resolvedManifestPath -OutputRoot $bundleRoot -RepoName $RepoName -Runtime $Runtime
 if ($LASTEXITCODE -ne 0) {
@@ -159,7 +190,7 @@ $errors = @()
 
 try {
     $dockerArgs = @(
-        '--context', $DockerContext,
+        '--context', $effectiveDockerContext,
         'run',
         '--rm',
         '--name', $containerName,
@@ -207,7 +238,8 @@ if (Test-Path -LiteralPath $containerReportPath -PathType Leaf) {
     status = $status
     image = $Image
     runtime = $Runtime
-    docker_context = $DockerContext
+    docker_context = $effectiveDockerContext
+    requested_docker_context = $DockerContext
     manifest_path = $resolvedManifestPath
     repo_name = $RepoName
     output_root = $resolvedOutputRoot
