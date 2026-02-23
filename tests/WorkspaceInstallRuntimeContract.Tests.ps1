@@ -33,6 +33,8 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match 'workspace-governance\.json'
         $script:scriptContent | Should -Match 'AGENTS\.md'
         $script:scriptContent | Should -Match 'Assert-WorkspaceGovernance\.ps1'
+        $script:scriptContent | Should -Match 'function Convert-ToProcessArgumentString'
+        $script:scriptContent | Should -Match 'ArgumentList = \$argumentString'
         $script:scriptContent | Should -Match 'runner-cli\.exe'
         $script:scriptContent | Should -Match 'runner-cli\.metadata\.json'
         $script:scriptContent | Should -Match 'required_ppl_bitnesses'

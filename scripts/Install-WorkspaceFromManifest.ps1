@@ -148,6 +148,27 @@ function Get-ErrorTaxonomy {
     return @($tags | Sort-Object -Unique)
 }
 
+function Convert-ToUtcTimestamp {
+    param(
+        [Parameter()]
+        [string]$Value = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    try {
+        return [DateTimeOffset]::Parse(
+            $Value,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        ).UtcDateTime
+    } catch {
+        return $null
+    }
+}
+
 function Get-PhaseMetrics {
     param(
         [Parameter()][AllowEmptyCollection()]
@@ -163,8 +184,7 @@ function Get-PhaseMetrics {
             continue
         }
 
-        $parsedTimestamp = $null
-        [void][DateTime]::TryParse([string]$entry.timestamp_utc, [ref]$parsedTimestamp)
+        $parsedTimestamp = Convert-ToUtcTimestamp -Value ([string]$entry.timestamp_utc)
         $durationFromPrevious = 0.0
         if ($null -ne $previousTimestamp -and $null -ne $parsedTimestamp) {
             $durationFromPrevious = [Math]::Max(0, ($parsedTimestamp - $previousTimestamp).TotalSeconds)
@@ -195,8 +215,8 @@ function Get-PhaseMetrics {
     $firstTimestamp = $null
     $lastTimestamp = $null
     if ($entries.Count -gt 0) {
-        [void][DateTime]::TryParse([string]$entries[0].timestamp_utc, [ref]$firstTimestamp)
-        [void][DateTime]::TryParse([string]$entries[-1].timestamp_utc, [ref]$lastTimestamp)
+        $firstTimestamp = Convert-ToUtcTimestamp -Value ([string]$entries[0].timestamp_utc)
+        $lastTimestamp = Convert-ToUtcTimestamp -Value ([string]$entries[-1].timestamp_utc)
     }
 
     $totalDurationSeconds = 0.0
@@ -375,6 +395,37 @@ function Get-TimeoutProcessTree {
     }
 }
 
+function Convert-ToProcessArgumentString {
+    param(
+        [Parameter()]
+        [string[]]$Arguments = @()
+    )
+
+    if (@($Arguments).Count -eq 0) {
+        return ''
+    }
+
+    $escapedArguments = foreach ($argument in $Arguments) {
+        $value = [string]$argument
+        if ($value.Length -eq 0) {
+            '""'
+            continue
+        }
+
+        if ($value -notmatch '[\s"]') {
+            $value
+            continue
+        }
+
+        # Escape according to CreateProcess command-line rules.
+        $escapedValue = $value -replace '(\\*)"', '$1$1\"'
+        $escapedValue = $escapedValue -replace '(\\+)$', '$1$1'
+        '"' + $escapedValue + '"'
+    }
+
+    return [string]::Join(' ', @($escapedArguments))
+}
+
 function Invoke-ExecutableWithTimeout {
     param(
         [Parameter(Mandatory = $true)]
@@ -390,11 +441,12 @@ function Invoke-ExecutableWithTimeout {
     $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("workspace-installer-stdout-{0}.log" -f ([guid]::NewGuid().ToString('N')))
     $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("workspace-installer-stderr-{0}.log" -f ([guid]::NewGuid().ToString('N')))
     $startUtc = (Get-Date).ToUniversalTime()
+    $argumentString = Convert-ToProcessArgumentString -Arguments $Arguments
 
     try {
         $startProcessParams = @{
             FilePath = $FilePath
-            ArgumentList = @($Arguments)
+            ArgumentList = $argumentString
             PassThru = $true
             NoNewWindow = $true
             RedirectStandardOutput = $stdoutPath
@@ -878,6 +930,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
     $vipBuildStatusPath = Join-Path -Path $statusRoot -ChildPath 'workspace-installer-vip-build.json'
     $vipcPath = '.github/actions/apply-vipc/runner_dependencies.vipc'
     $vipbPath = 'Tooling/deployment/NI Icon editor.vipb'
+    $vipLabviewVersion = if ($ExecutionLabviewYear -match '^\d{4}$') { [string]$ExecutionLabviewYear } else { [string]$RunnerCliLabviewVersion }
 
     $result = [ordered]@{
         status = 'pending'
@@ -886,6 +939,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         repo_path = $IconEditorRepoPath
         required_labview_year = $ExecutionLabviewYear
         runner_cli_labview_version = $RunnerCliLabviewVersion
+        vip_labview_version = $vipLabviewVersion
         required_bitness = $RequiredBitness
         vipb_path = $vipbPath
         vipc_path = $vipcPath
@@ -968,7 +1022,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             '--repo-root', $IconEditorRepoPath,
             '--supported-bitness', $RequiredBitness,
             '--vipc-path', $vipcPath,
-            '--labview-version', $RunnerCliLabviewVersion,
+            '--labview-version', $vipLabviewVersion,
             '--output-path', $vipcAuditPath,
             '--fail-on-mismatch'
         )
@@ -996,7 +1050,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
                 '--repo-root', $IconEditorRepoPath,
                 '--supported-bitness', $RequiredBitness,
                 '--vipc-path', $vipcPath,
-                '--labview-version', $RunnerCliLabviewVersion,
+                '--labview-version', $vipLabviewVersion,
                 '--skip-worktree-root-check'
             )
             $result.command.vipc_apply = @($vipcApplyArgs)
@@ -1045,7 +1099,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             '--repo-root', $IconEditorRepoPath,
             '--supported-bitness', $RequiredBitness,
             '--vipb-path', $vipbPath,
-            '--labview-version', $RunnerCliLabviewVersion,
+            '--labview-version', $vipLabviewVersion,
             '--labview-minor-revision', '0',
             '--major', '0',
             '--minor', '0',
@@ -1203,6 +1257,7 @@ $vipPackageBuildCheck = [ordered]@{
     repo_path = ''
     required_labview_year = '2020'
     runner_cli_labview_version = '2020'
+    vip_labview_version = '2020'
     required_bitness = '64'
     vipb_path = ''
     vipc_path = ''
@@ -1347,6 +1402,7 @@ try {
     }
     $vipPackageBuildCheck.required_labview_year = $requiredLabviewYear
     $vipPackageBuildCheck.runner_cli_labview_version = $runnerCliLabviewVersion
+    $vipPackageBuildCheck.vip_labview_version = $requiredLabviewYear
     $vipPackageBuildCheck.required_bitness = $requiredVipBitness
 
     $repoTotal = @($manifest.managed_repos).Count
@@ -1660,6 +1716,7 @@ try {
     }
     $vipPackageBuildCheck.required_labview_year = $requiredLabviewYear
     $vipPackageBuildCheck.runner_cli_labview_version = $runnerCliLabviewVersion
+    $vipPackageBuildCheck.vip_labview_version = $requiredLabviewYear
 
     try {
         Write-InstallerFeedback -Message 'Verifying bundled runner-cli integrity.'
@@ -1807,6 +1864,7 @@ try {
                     repo_path = [string]$vipResult.repo_path
                     required_labview_year = [string]$vipResult.required_labview_year
                     runner_cli_labview_version = [string]$vipResult.runner_cli_labview_version
+                    vip_labview_version = [string]$vipResult.vip_labview_version
                     required_bitness = [string]$vipResult.required_bitness
                     vipb_path = [string]$vipResult.vipb_path
                     vipc_path = [string]$vipResult.vipc_path

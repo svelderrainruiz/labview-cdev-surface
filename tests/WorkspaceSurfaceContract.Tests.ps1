@@ -35,6 +35,7 @@ Describe 'Workspace surface contract' {
         $script:canaryWorkflowPath = Join-Path $script:repoRoot '.github/workflows/nightly-supplychain-canary.yml'
         $script:windowsImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/windows-labview-image-gate.yml'
         $script:linuxImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/linux-labview-image-gate.yml'
+        $script:installerHarnessWorkflowPath = Join-Path $script:repoRoot '.github/workflows/installer-harness-self-hosted.yml'
         $script:kpiSignalWorkflowPath = Join-Path $script:repoRoot '.github/workflows/workspace-installer-kpi-signal.yml'
         $script:governanceDebtWorkflowPath = Join-Path $script:repoRoot '.github/workflows/governance-debt-signal.yml'
         $script:globalJsonPath = Join-Path $script:repoRoot 'global.json'
@@ -74,6 +75,7 @@ Describe 'Workspace surface contract' {
             $script:canaryWorkflowPath,
             $script:windowsImageGateWorkflowPath,
             $script:linuxImageGateWorkflowPath,
+            $script:installerHarnessWorkflowPath,
             $script:kpiSignalWorkflowPath,
             $script:governanceDebtWorkflowPath,
             $script:globalJsonPath,
@@ -96,6 +98,7 @@ Describe 'Workspace surface contract' {
         $script:readmeContent = Get-Content -LiteralPath $script:readmePath -Raw
         $script:ciWorkflowContent = Get-Content -LiteralPath $script:ciWorkflowPath -Raw
         $script:releaseWorkflowContent = Get-Content -LiteralPath $script:releaseWorkflowPath -Raw
+        $script:installerHarnessWorkflowContent = Get-Content -LiteralPath $script:installerHarnessWorkflowPath -Raw
         $script:kpiWorkflowContent = Get-Content -LiteralPath $script:kpiSignalWorkflowPath -Raw
     }
 
@@ -190,5 +193,13 @@ Describe 'Workspace surface contract' {
         $script:kpiWorkflowContent | Should -Match 'Measure-WorkspaceInstallerKpis\.ps1'
         $script:kpiWorkflowContent | Should -Match 'Assert-WorkspaceInstallerKpis\.ps1'
         $script:kpiWorkflowContent | Should -Match 'Publish-WorkspaceInstallerKpiSummary\.ps1'
+    }
+
+    It 'defines installer harness artifact contract with exec diagnostics log' {
+        $script:installerHarnessWorkflowContent | Should -Match 'name:\s*Installer Harness'
+        $script:installerHarnessWorkflowContent | Should -Match 'Upload installer harness artifacts'
+        $script:installerHarnessWorkflowContent | Should -Match 'workspace-installer-launch\.log'
+        $script:installerHarnessWorkflowContent | Should -Match 'workspace-installer-exec\.log'
+        $script:installerHarnessWorkflowContent | Should -Match 'workspace-installer-kpi-summary\.md'
     }
 }

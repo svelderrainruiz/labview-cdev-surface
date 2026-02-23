@@ -47,19 +47,42 @@ function Get-SmokeReportFailureSummary {
     param([Parameter(Mandatory = $true)][string]$SmokeWorkspaceRoot)
 
     $reportPath = Join-Path $SmokeWorkspaceRoot 'artifacts\workspace-install-latest.json'
+    $execLogPath = Join-Path $SmokeWorkspaceRoot 'artifacts\workspace-installer-exec.log'
     if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
-        return "Smoke report not found: $reportPath"
+        $details = @("Smoke report not found: $reportPath")
+        if (Test-Path -LiteralPath $execLogPath -PathType Leaf) {
+            $execTail = [string]::Join(' | ', @(
+                    Get-Content -LiteralPath $execLogPath -ErrorAction SilentlyContinue |
+                        Select-Object -Last 20 |
+                        ForEach-Object { [string]$_ }
+                ))
+            $details += "exec_log=$execLogPath"
+            if (-not [string]::IsNullOrWhiteSpace($execTail)) {
+                $details += "exec_log_tail=$execTail"
+            }
+        }
+        return [string]::Join('; ', $details)
     }
 
     try {
         $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json -ErrorAction Stop
         $status = [string]$report.status
-        $errors = @($report.errors | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        $warnings = @($report.warnings | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $errors = @(
+            @($report.errors | ForEach-Object { [string]$_ }) |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+        $warnings = @(
+            @($report.warnings | ForEach-Object { [string]$_ }) |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
         $topError = if ($errors.Count -gt 0) { $errors[0] } else { '<none>' }
         return ("smoke_report={0}; status={1}; errors={2}; warnings={3}; top_error={4}" -f $reportPath, $status, $errors.Count, $warnings.Count, $topError)
     } catch {
-        return "Failed to parse smoke report '$reportPath': $($_.Exception.Message)"
+        $details = @("Failed to parse smoke report '$reportPath': $($_.Exception.Message)")
+        if (Test-Path -LiteralPath $execLogPath -PathType Leaf) {
+            $details += "exec_log=$execLogPath"
+        }
+        return [string]::Join('; ', $details)
     }
 }
 

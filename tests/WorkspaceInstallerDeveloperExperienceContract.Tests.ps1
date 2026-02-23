@@ -28,6 +28,7 @@ Describe 'Workspace installer developer experience diagnostics contract' {
 
     It 'emits first-class smoke launch diagnostics artifact with lifecycle feedback' {
         $script:exerciseContent | Should -Match 'workspace-installer-launch\.log'
+        $script:exerciseContent | Should -Match 'workspace-installer-exec\.log'
         $script:exerciseContent | Should -Match 'Write-SmokeLaunchLog'
         $script:exerciseContent | Should -Match 'Smoke installer process started'
         $script:exerciseContent | Should -Match 'Smoke installer process exited'
@@ -76,6 +77,13 @@ Describe 'Workspace installer developer experience diagnostics contract' {
         $script:installContent | Should -Match 'command_diagnostics = \$commandDiagnostics'
         $script:installContent | Should -Match 'failure_fingerprint = \$failureFingerprint'
         $script:installContent | Should -Match 'developer_feedback = \$developerFeedback'
+    }
+
+    It 'uses round-trip safe timestamp parsing for phase metrics' {
+        $script:installContent | Should -Match 'function Convert-ToUtcTimestamp'
+        $script:installContent | Should -Match 'DateTimeOffset\]::Parse'
+        $script:installContent | Should -Match 'Convert-ToUtcTimestamp -Value'
+        $script:installContent | Should -Not -Match '\[DateTime\]::TryParse'
     }
 
     It 'captures command timeout diagnostics for runner-cli and governance phases' {

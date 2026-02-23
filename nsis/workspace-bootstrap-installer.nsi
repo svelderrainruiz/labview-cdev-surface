@@ -31,6 +31,10 @@ Name "LVIE Cdev Workspace Bootstrap"
   !define REPORT_REL "artifacts\workspace-install-latest.json"
 !endif
 
+!ifndef EXEC_LOG_REL
+  !define EXEC_LOG_REL "artifacts\workspace-installer-exec.log"
+!endif
+
 OutFile "${OUT_FILE}"
 InstallDir "$TEMP\lvie-cdev-workspace-installer"
 Page instfiles
@@ -39,7 +43,9 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File /r "${PAYLOAD_DIR}\*"
 
-  ExecWait '"pwsh" -NoProfile -File "$INSTDIR\${INSTALL_SCRIPT_REL}" -WorkspaceRoot "${WORKSPACE_ROOT}" -ManifestPath "$INSTDIR\${MANIFEST_REL}" -Mode Install -ExecutionContext NsisInstall -OutputPath "${WORKSPACE_ROOT}\${REPORT_REL}"' $0
+  CreateDirectory "${WORKSPACE_ROOT}\artifacts"
+  Delete "${WORKSPACE_ROOT}\${EXEC_LOG_REL}"
+  ExecWait '"cmd" /C ""pwsh" -NoProfile -File "$INSTDIR\${INSTALL_SCRIPT_REL}" -WorkspaceRoot "${WORKSPACE_ROOT}" -ManifestPath "$INSTDIR\${MANIFEST_REL}" -Mode Install -ExecutionContext NsisInstall -OutputPath "${WORKSPACE_ROOT}\${REPORT_REL}" > "${WORKSPACE_ROOT}\${EXEC_LOG_REL}" 2>&1"' $0
   ${If} $0 != 0
     SetErrorLevel $0
     Abort

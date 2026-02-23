@@ -29,6 +29,7 @@ Describe 'Workspace installer local exercise contract' {
         $script:scriptContent | Should -Match '''g-cli'''
         $script:scriptContent | Should -Match 'exercise-report\.json'
         $script:scriptContent | Should -Match 'workspace-install-latest\.json'
+        $script:scriptContent | Should -Match 'workspace-installer-exec\.log'
     }
 
     It 'has parse-safe PowerShell syntax' {

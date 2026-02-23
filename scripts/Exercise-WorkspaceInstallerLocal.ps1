@@ -67,18 +67,54 @@ function Write-SmokeLaunchLog {
 function Get-SmokeFailureSummary {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$SmokeReportPath
+        [string]$SmokeReportPath,
+        [Parameter()]
+        [string]$SmokeWorkspaceRoot = ''
     )
 
+    $execLogPath = ''
+    $governanceReportPath = ''
+    if (-not [string]::IsNullOrWhiteSpace($SmokeWorkspaceRoot)) {
+        $execLogPath = Join-Path $SmokeWorkspaceRoot 'artifacts\workspace-installer-exec.log'
+        $governanceReportPath = Join-Path $SmokeWorkspaceRoot 'artifacts\workspace-governance-latest.json'
+    }
+
     if (-not (Test-Path -LiteralPath $SmokeReportPath -PathType Leaf)) {
-        return "Smoke report not found: $SmokeReportPath"
+        $details = @("Smoke report not found: $SmokeReportPath")
+        if (-not [string]::IsNullOrWhiteSpace($execLogPath) -and (Test-Path -LiteralPath $execLogPath -PathType Leaf)) {
+            $execTail = [string]::Join(' | ', @(
+                    Get-Content -LiteralPath $execLogPath -ErrorAction SilentlyContinue |
+                        Select-Object -Last 20 |
+                        ForEach-Object { [string]$_ }
+                ))
+            $details += "exec_log=$execLogPath"
+            if (-not [string]::IsNullOrWhiteSpace($execTail)) {
+                $details += "exec_log_tail=$execTail"
+            }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($governanceReportPath) -and (Test-Path -LiteralPath $governanceReportPath -PathType Leaf)) {
+            try {
+                $governanceReport = Get-Content -LiteralPath $governanceReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                $failedRepos = [int]$governanceReport.summary.failed
+                $details += ("governance_report={0}; failed_repos={1}" -f $governanceReportPath, $failedRepos)
+            } catch {
+                $details += ("governance_report_parse_error={0}" -f $_.Exception.Message)
+            }
+        }
+        return [string]::Join('; ', $details)
     }
 
     try {
         $report = Get-Content -LiteralPath $SmokeReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
         $status = [string]$report.status
-        $errors = @($report.errors | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        $warnings = @($report.warnings | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $errors = @(
+            @($report.errors | ForEach-Object { [string]$_ }) |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+        $warnings = @(
+            @($report.warnings | ForEach-Object { [string]$_ }) |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
         $topErrors = [string]::Join(' | ', @($errors | Select-Object -First 5))
         if ([string]::IsNullOrWhiteSpace($topErrors)) {
             $topErrors = '<none>'
@@ -296,27 +332,29 @@ if ((-not $SkipSmokeInstall) -and (-not $SkipSmokeBuild)) {
             Write-Warning ("Failed to terminate timed-out smoke installer process {0}: {1}" -f $smokeProcess.Id, $_.Exception.Message)
             Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Failed to terminate timed-out process pid={0}. error={1}" -f $smokeProcess.Id, $_.Exception.Message)
         }
-        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath
+        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath -SmokeWorkspaceRoot $resolvedSmokeRoot
         Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke timeout summary: {0}" -f $summary)
         throw "Smoke installer timed out after $SmokeInstallerTimeoutSeconds seconds (pid=$($smokeProcess.Id)). Diagnostics: $writtenPath. Launch log: $smokeLaunchLogPath. $summary"
     }
     $smokeExitCode = $smokeProcess.ExitCode
     Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke installer process exited. pid={0}; exit_code={1}" -f $smokeProcess.Id, $smokeExitCode)
     if ($smokeExitCode -ne 0) {
-        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath
+        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath -SmokeWorkspaceRoot $resolvedSmokeRoot
         Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke installer failed. summary={0}" -f $summary)
         throw "Smoke installer failed with exit code $smokeExitCode. Launch log: $smokeLaunchLogPath. $summary"
     }
 
     if (-not (Test-Path -LiteralPath $smokeReportPath -PathType Leaf)) {
-        throw "Smoke install report not found: $smokeReportPath"
+        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath -SmokeWorkspaceRoot $resolvedSmokeRoot
+        Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke install report missing after successful process exit. summary={0}" -f $summary)
+        throw "Smoke install report not found after process exit. Launch log: $smokeLaunchLogPath. $summary"
     }
 
     $smokeInstallReport = Get-Content -LiteralPath $smokeReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
     $smokeStatus = [string]$smokeInstallReport.status
     Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke install report parsed. status={0}; report={1}" -f $smokeStatus, $smokeReportPath)
     if ($smokeStatus -ne 'succeeded') {
-        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath
+        $summary = Get-SmokeFailureSummary -SmokeReportPath $smokeReportPath -SmokeWorkspaceRoot $resolvedSmokeRoot
         Write-SmokeLaunchLog -LogPath $smokeLaunchLogPath -Message ("Smoke install report indicates failure. summary={0}" -f $summary)
         throw "Smoke install report status is '$smokeStatus' (expected 'succeeded'). Launch log: $smokeLaunchLogPath. $summary"
     }
