@@ -136,7 +136,7 @@ if ($SkipPester) {
     $containerScriptPathUsed = $containerScriptHostPathSh
     $containerScriptContent = @"
 #!/bin/sh
-set -eu
+set -e
 
 runner_cli_source='/bundle/runner-cli.exe'
 if [ ! -f "`$runner_cli_source" ]; then
@@ -164,7 +164,8 @@ cat > /hostout/container-report.json <<JSON
 }
 JSON
 "@
-    Set-Content -LiteralPath $containerScriptHostPathSh -Value $containerScriptContent -Encoding utf8
+    $containerScriptContent = $containerScriptContent -replace "`r`n", "`n"
+    [System.IO.File]::WriteAllText($containerScriptHostPathSh, $containerScriptContent, (New-Object System.Text.UTF8Encoding($false)))
     $containerEntryPoint = @('sh', '/hostout/container-run.sh')
 } else {
     $containerScriptPathUsed = $containerScriptHostPathPs1
