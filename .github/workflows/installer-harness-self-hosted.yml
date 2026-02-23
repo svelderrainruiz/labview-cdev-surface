@@ -45,7 +45,7 @@ jobs:
       - name: Assert runner baseline lock
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WORKFLOW_BOT_TOKEN != '' && secrets.WORKFLOW_BOT_TOKEN || github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $runnerWorkspace = [string]$env:RUNNER_WORKSPACE
@@ -59,9 +59,10 @@ jobs:
 
           $reportPath = Join-Path $env:RUNNER_TEMP 'installer-harness/runner-baseline-report.json'
           & pwsh -NoProfile -File ./scripts/Assert-InstallerHarnessRunnerBaseline.ps1 `
-            -Repository 'LabVIEW-Community-CI-CD/labview-cdev-surface' `
+            -Repository '${{ github.repository }}' `
             -RunnerRoots @($activeRunnerRoot) `
             -AllowInteractiveRunner `
+            -RequiredLabels @('self-hosted','windows','self-hosted-windows-lv','installer-harness') `
             -OutputPath $reportPath
           if ($LASTEXITCODE -ne 0) {
             if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
@@ -90,7 +91,7 @@ jobs:
       - name: Run full installer harness iteration
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WORKFLOW_BOT_TOKEN != '' && secrets.WORKFLOW_BOT_TOKEN || github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $toolDirs = @(

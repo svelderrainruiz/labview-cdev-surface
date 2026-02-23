@@ -102,10 +102,12 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 
 $expectedGitHubUrl = "https://github.com/$Repository"
+$serviceRepoSlug = ($Repository -replace '/', '-')
+$serviceNamePrefix = "actions.runner.$serviceRepoSlug."
 
-$serviceInventory = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.LabVIEW-Community-CI-CD-labview-cdev-surface*' })
+$serviceInventory = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -like "$serviceNamePrefix*" })
 $requiredServiceCount = if ($AllowInteractiveRunner.IsPresent) { 0 } else { $RunnerRoots.Count }
-Add-Check -Scope 'services' -Name 'service_count' -Passed ($serviceInventory.Count -ge $requiredServiceCount) -Detail ("count={0}; required_minimum={1}" -f $serviceInventory.Count, $requiredServiceCount)
+Add-Check -Scope 'services' -Name 'service_count' -Passed ($serviceInventory.Count -ge $requiredServiceCount) -Detail ("count={0}; required_minimum={1}; prefix={2}" -f $serviceInventory.Count, $requiredServiceCount, $serviceNamePrefix)
 
 foreach ($runnerRoot in $RunnerRoots) {
     $scope = "runner-root:$runnerRoot"
