@@ -264,6 +264,51 @@ function Get-LabVIEWSourceVersionFromRepo {
     return [string]((Get-Content -LiteralPath $versionPath -Raw).Trim())
 }
 
+function Set-LabVIEWSourceVersionInRepo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    $versionPath = Join-Path -Path $RepoRoot -ChildPath '.lvversion'
+    $result = [ordered]@{
+        status = 'not_run'
+        path = $versionPath
+        previous = ''
+        current = $Version
+        message = ''
+    }
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($Version)) {
+            throw 'Requested LabVIEW source version is empty.'
+        }
+
+        $existing = ''
+        if (Test-Path -LiteralPath $versionPath -PathType Leaf) {
+            $existing = [string]((Get-Content -LiteralPath $versionPath -Raw).Trim())
+        }
+        $result.previous = $existing
+
+        if ([string]$existing -eq [string]$Version) {
+            $result.status = 'already_aligned'
+            $result.message = ".lvversion already matches '$Version'."
+            return [pscustomobject]$result
+        }
+
+        Set-Content -LiteralPath $versionPath -Value $Version -Encoding ascii
+        $result.status = 'updated'
+        $result.message = "Set .lvversion to '$Version' for container runner-cli compatibility."
+    } catch {
+        $result.status = 'failed'
+        $result.message = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
 function Unblock-ExecutableForAutomation {
     param(
         [Parameter(Mandatory = $true)]
@@ -647,6 +692,13 @@ $labviewVersionResolution = [ordered]@{
     is_container_execution = $false
     lvcontainer_path = ''
     lvcontainer_raw = ''
+    lvversion_container_shim = [ordered]@{
+        status = 'not_run'
+        path = ''
+        previous = ''
+        current = ''
+        message = ''
+    }
     execution_labview_year = '2020'
     runner_cli_labview_version = '2020'
     message = ''
@@ -1098,6 +1150,23 @@ try {
             } else {
                 $warnings += "LabVIEW source version file '.lvversion' was not found at '$iconEditorRepoPath'; runner-cli will use execution year '$requiredLabviewYear' as source version."
             }
+        }
+    }
+
+    if ($labviewVersionResolution.is_container_execution -and -not [string]::IsNullOrWhiteSpace($iconEditorRepoPath)) {
+        $versionShim = Set-LabVIEWSourceVersionInRepo -RepoRoot $iconEditorRepoPath -Version ([string]$runnerCliLabviewVersion)
+        $labviewVersionResolution.lvversion_container_shim = [ordered]@{
+            status = [string]$versionShim.status
+            path = [string]$versionShim.path
+            previous = [string]$versionShim.previous
+            current = [string]$versionShim.current
+            message = [string]$versionShim.message
+        }
+
+        if ([string]$versionShim.status -eq 'failed') {
+            $errors += "Container source version shim failed. $([string]$versionShim.message)"
+        } else {
+            Write-InstallerFeedback -Message ("Container source version shim status={0}; path={1}; previous='{2}'; current='{3}'." -f [string]$versionShim.status, [string]$versionShim.path, [string]$versionShim.previous, [string]$versionShim.current)
         }
     }
 

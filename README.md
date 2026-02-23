@@ -156,6 +156,7 @@ On failure, it updates a single tracking issue (`Nightly Supply-Chain Canary Fai
 `windows-labview-image-gate.yml` is dispatch-only in phase 1 and targets a dedicated self-hosted Windows runner with Windows containers.  
 The gate image is selectable at dispatch via input `labview_windows_image`, with default pinned to the known-working digest (`nationalinstruments/labview@sha256:57c453dabd2ff0185ce718d88704921bb82eb83189f4049205ed9b4da7df7bcd`).  
 It pulls one selected image, installs the NSIS workspace installer in-container, runs bundled `runner-cli ppl build` against container-compatible LabVIEW contracts (`.lvcontainer` is authoritative for both execution year and source version in container mode), and enforces post-action report checks.
+For legacy `runner-cli` compatibility in container runs, the installer applies an in-worktree `.lvversion` shim to the resolved container source version and records that action in `labview_version_resolution.lvversion_container_shim`.
 
 For current gate reliability in this image profile, VIP harness execution is intentionally skipped via policy (`LVIE_SKIP_VIP_HARNESS=1`) and reported as `skipped`.
 
