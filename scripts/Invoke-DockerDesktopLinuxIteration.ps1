@@ -99,7 +99,8 @@ $resolvedOutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 $bundleRoot = Join-Path $resolvedOutputRoot 'runner-cli-linux'
 $containerReportPath = Join-Path $resolvedOutputRoot 'container-report.json'
 $hostReportPath = Join-Path $resolvedOutputRoot 'docker-linux-iteration-report.json'
-$containerScriptHostPath = Join-Path $resolvedOutputRoot 'container-run.ps1'
+$containerScriptHostPathPs1 = Join-Path $resolvedOutputRoot 'container-run.ps1'
+$containerScriptHostPathSh = Join-Path $resolvedOutputRoot 'container-run.sh'
 $bundleScript = Join-Path $repoRoot 'scripts\Build-RunnerCliBundleFromManifest.ps1'
 
 foreach ($commandName in @('pwsh', 'git', 'dotnet', 'docker')) {
@@ -129,7 +130,45 @@ if ($LASTEXITCODE -ne 0) {
     throw "Build-RunnerCliBundleFromManifest.ps1 failed with exit code $LASTEXITCODE."
 }
 
-$containerScriptContent = @"
+$containerEntryPoint = @()
+$containerScriptPathUsed = ''
+if ($SkipPester) {
+    $containerScriptPathUsed = $containerScriptHostPathSh
+    $containerScriptContent = @"
+#!/bin/sh
+set -eu
+
+runner_cli_source='/bundle/runner-cli.exe'
+if [ ! -f "`$runner_cli_source" ]; then
+  echo "Bundled runner-cli not found: `$runner_cli_source" >&2
+  exit 1
+fi
+
+runner_cli_path='/tmp/runner-cli'
+cp "`$runner_cli_source" "`$runner_cli_path"
+chmod +x "`$runner_cli_path"
+
+"`$runner_cli_path" --help > /tmp/runner-cli-help.log 2>&1
+"`$runner_cli_path" ppl --help > /tmp/runner-cli-ppl-help.log 2>&1
+
+timestamp_utc="`$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+cat > /hostout/container-report.json <<JSON
+{
+  "timestamp_utc": "`$timestamp_utc",
+  "status": "succeeded",
+  "image": "$Image",
+  "runtime": "$Runtime",
+  "runner_cli_help_log": "/tmp/runner-cli-help.log",
+  "runner_cli_ppl_help_log": "/tmp/runner-cli-ppl-help.log",
+  "pester_ran": false
+}
+JSON
+"@
+    Set-Content -LiteralPath $containerScriptHostPathSh -Value $containerScriptContent -Encoding utf8
+    $containerEntryPoint = @('sh', '/hostout/container-run.sh')
+} else {
+    $containerScriptPathUsed = $containerScriptHostPathPs1
+    $containerScriptContent = @"
 param(
     [switch]`$SkipPester
 )
@@ -178,7 +217,12 @@ if (-not `$SkipPester) {
 } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath /hostout/container-report.json -Encoding utf8
 "@
 
-Set-Content -LiteralPath $containerScriptHostPath -Value $containerScriptContent -Encoding utf8
+    Set-Content -LiteralPath $containerScriptHostPathPs1 -Value $containerScriptContent -Encoding utf8
+    $containerEntryPoint = @('pwsh', '-NoProfile', '-File', '/hostout/container-run.ps1')
+    if ($SkipPester) {
+        $containerEntryPoint += '-SkipPester'
+    }
+}
 
 $dockerVolumeRepo = "{0}:/repo" -f $repoRoot
 $dockerVolumeBundle = "{0}:/bundle" -f $bundleRoot
@@ -197,12 +241,9 @@ try {
         '-v', $dockerVolumeRepo,
         '-v', $dockerVolumeBundle,
         '-v', $dockerVolumeOutput,
-        $Image,
-        'pwsh', '-NoProfile', '-File', '/hostout/container-run.ps1'
+        $Image
     )
-    if ($SkipPester) {
-        $dockerArgs += '-SkipPester'
-    }
+    $dockerArgs += $containerEntryPoint
 
     & docker @dockerArgs
     $containerExitCode = $LASTEXITCODE
@@ -244,15 +285,19 @@ if (Test-Path -LiteralPath $containerReportPath -PathType Leaf) {
     repo_name = $RepoName
     output_root = $resolvedOutputRoot
     bundle_root = $bundleRoot
-    container_script = $containerScriptHostPath
+    container_script = $containerScriptPathUsed
     container_exit_code = $containerExitCode
     skip_pester = [bool]$SkipPester
     container_report = $containerReport
     errors = $errors
 } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $hostReportPath -Encoding utf8
 
-if (-not $KeepContainerScript -and (Test-Path -LiteralPath $containerScriptHostPath -PathType Leaf)) {
-    Remove-Item -LiteralPath $containerScriptHostPath -Force
+if (-not $KeepContainerScript) {
+    foreach ($scriptPath in @($containerScriptHostPathPs1, $containerScriptHostPathSh)) {
+        if (Test-Path -LiteralPath $scriptPath -PathType Leaf) {
+            Remove-Item -LiteralPath $scriptPath -Force
+        }
+    }
 }
 
 Write-Host "Docker Linux iteration report: $hostReportPath"

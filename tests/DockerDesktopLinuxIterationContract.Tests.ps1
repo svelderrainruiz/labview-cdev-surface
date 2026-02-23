@@ -19,6 +19,8 @@ Describe 'Docker Desktop Linux iteration contract' {
         $script:scriptContent | Should -Match '\[string\]\$DockerContext\s*=\s*''desktop-linux'''
         $script:scriptContent | Should -Match 'Resolve-DockerContextForLinuxIteration'
         $script:scriptContent | Should -Match 'requested_docker_context'
+        $script:scriptContent | Should -Match 'container-run\.sh'
+        $script:scriptContent | Should -Match '''sh'', ''/hostout/container-run\.sh'''
         $script:scriptContent | Should -Match 'runner-cli\.exe'
         $script:scriptContent | Should -Match 'docker run'
         $script:scriptContent | Should -Match '--context'
