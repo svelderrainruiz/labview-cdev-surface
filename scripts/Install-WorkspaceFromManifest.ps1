@@ -1085,15 +1085,9 @@ try {
             } else {
                 $warnings += "Container execution detected but .lvcontainer could not resolve an execution year. $([string]$containerContract.message)"
                 Write-InstallerFeedback -Message ("Container LabVIEW contract warning: {0}" -f [string]$containerContract.message)
-
-                $sourceVersionRaw = Get-LabVIEWSourceVersionFromRepo -RepoRoot $iconEditorRepoPath
-                if (-not [string]::IsNullOrWhiteSpace($sourceVersionRaw)) {
-                    $runnerCliLabviewVersion = [string]$sourceVersionRaw
-                    $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
-                    $warnings += "Container execution fell back to '.lvversion' source contract because .lvcontainer was unresolved."
-                } else {
-                    $warnings += "LabVIEW source version file '.lvversion' was not found at '$iconEditorRepoPath'; runner-cli will use execution year '$requiredLabviewYear' as source version."
-                }
+                $runnerCliLabviewVersion = [string]$requiredLabviewYear
+                $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+                $warnings += "Container execution kept runner-cli source version pinned to execution year '$requiredLabviewYear' because .lvcontainer was unresolved. .lvversion is not used in container execution."
             }
         } else {
             $sourceVersionRaw = Get-LabVIEWSourceVersionFromRepo -RepoRoot $iconEditorRepoPath

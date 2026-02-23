@@ -163,6 +163,7 @@ For current gate reliability in this image profile, VIP harness execution is int
 
 `linux-labview-image-gate.yml` is dispatch-only and targets the self-hosted Windows runner with Docker Desktop Linux context.
 The gate image is selectable at dispatch via input `labview_linux_image`, with default set to the known-working tag (`nationalinstruments/labview:2026q1-linux`).
+The workflow explicitly switches Docker Desktop to Linux engine before gate execution.
 It uses one selected Linux LabVIEW image and runs `Invoke-DockerDesktopLinuxIteration.ps1` with manifest-pinned `runner-cli` bundle checks in container mode.
 
 Artifacts include `docker-linux-iteration-report.json` and the full gate output under `artifacts/linux-image-gate`.

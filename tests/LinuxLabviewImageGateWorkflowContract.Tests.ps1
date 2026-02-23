@@ -23,6 +23,8 @@ Describe 'Linux LabVIEW image gate workflow contract' {
 
     It 'uses a single LabVIEW linux image and desktop-linux docker context' {
         $script:workflowContent | Should -Match 'LABVIEW_LINUX_IMAGE:\s*\$\{\{\s*inputs\.labview_linux_image\s*\}\}'
+        $script:workflowContent | Should -Match 'Switch to Docker Desktop Linux engine'
+        $script:workflowContent | Should -Match 'DockerCli\.exe.*-SwitchLinuxEngine'
         $script:workflowContent | Should -Match 'Invoke-DockerDesktopLinuxIteration\.ps1'
         $script:workflowContent | Should -Match '-Image \$env:LABVIEW_LINUX_IMAGE'
         $script:workflowContent | Should -Match "-DockerContext 'desktop-linux'"
