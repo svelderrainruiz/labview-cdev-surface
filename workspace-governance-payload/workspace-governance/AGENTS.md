@@ -142,5 +142,10 @@ Deterministic installer policy (`lvie-cdev-workspace-installer.exe`):
 - Existing path drift is a hard stop: remote mismatch or `HEAD != pinned_sha` fails install.
 - Branch protection checks during install are audit-only (non-blocking for install completion).
 - Mutation safety remains enforced by this file and governance scripts after install.
+- Diagnostics KPI policy is sourced from bundled `diagnostics-kpi.json`.
+- Installer diagnostics report contract requires:
+  - `diagnostics.schema_version = 1.0`
+  - `phase_metrics`, `command_diagnostics`, `artifact_index`, `failure_fingerprint`, and `developer_feedback`.
+- KPI gating is staged: advisory burn-in first, blocking only after sustained KPI conformance.
 
 - If preflight fails, do not run mutating `git` or `gh` commands until remotes and policy targets are corrected.

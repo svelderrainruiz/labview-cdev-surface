@@ -1,0 +1,43 @@
+{
+  "kpi_version": "1.0",
+  "burn_in_mode": "advisory",
+  "thresholds": {
+    "artifact_coverage_rate_min": 0.98,
+    "failure_summary_completeness_min": 0.95,
+    "mean_time_to_diagnose_minutes_max": 15,
+    "hang_recovery_time_minutes_max": 5,
+    "terminal_run_rate_60m_min": 0.99,
+    "schema_conformance_rate_min": 1.0,
+    "actionable_error_rate_min": 0.95
+  },
+  "scope_profiles": {
+    "Mutation": {
+      "enabled": true
+    },
+    "WorkspaceAudit": {
+      "enabled": true
+    },
+    "Harness": {
+      "enabled": true
+    }
+  },
+  "required_artifacts": [
+    "workspace-install-latest.json",
+    "workspace-installer-launch.log",
+    "harness-validation-report.json",
+    "runner-baseline-report.json",
+    "machine-preflight-report.json"
+  ],
+  "timeout_artifacts": [
+    "smoke-installer-timeout-diagnostics.json"
+  ],
+  "max_phase_duration_seconds": {
+    "payload-sync": 600,
+    "repository-contracts": 1800,
+    "runner-cli-bundle": 600,
+    "ppl-build": 1800,
+    "vip-harness": 2400,
+    "governance-audit": 600
+  },
+  "max_stuck_process_count": 0
+}

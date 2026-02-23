@@ -43,6 +43,26 @@ function Ensure-Directory {
     }
 }
 
+function Get-SmokeReportFailureSummary {
+    param([Parameter(Mandatory = $true)][string]$SmokeWorkspaceRoot)
+
+    $reportPath = Join-Path $SmokeWorkspaceRoot 'artifacts\workspace-install-latest.json'
+    if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+        return "Smoke report not found: $reportPath"
+    }
+
+    try {
+        $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $status = [string]$report.status
+        $errors = @($report.errors | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $warnings = @($report.warnings | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $topError = if ($errors.Count -gt 0) { $errors[0] } else { '<none>' }
+        return ("smoke_report={0}; status={1}; errors={2}; warnings={3}; top_error={4}" -f $reportPath, $status, $errors.Count, $warnings.Count, $topError)
+    } catch {
+        return "Failed to parse smoke report '$reportPath': $($_.Exception.Message)"
+    }
+}
+
 function Get-WorkspaceFingerprint {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
@@ -129,7 +149,8 @@ function Invoke-IterationRun {
         & pwsh @argList | Out-Host
         $runExitCode = $LASTEXITCODE
         if ($runExitCode -ne 0) {
-            throw "Exercise script exited with code $runExitCode"
+            $smokeSummary = Get-SmokeReportFailureSummary -SmokeWorkspaceRoot $runSmokeRoot
+            throw "Exercise script exited with code $runExitCode. $smokeSummary"
         }
         $status = 'succeeded'
     } catch {

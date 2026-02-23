@@ -64,6 +64,28 @@ This repository is the canonical policy and manifest surface for deterministic `
 - Installer runtime report must emit `ppl_capability_checks` (per bitness) and ordered `post_action_sequence` evidence.
 - Branch-protection-only governance failures remain audit-only; runner-cli/PPL/VIP capability failures are hard-stop failures.
 
+## Installer Diagnostics + KPI Contract
+- Diagnostics schema contract is `schemas/workspace-installer-diagnostics.schema.json` (`diagnostics.schema_version=1.0`).
+- KPI contract source is `diagnostics-kpi.json` and must stay byte-aligned with `workspace-governance-payload/workspace-governance/diagnostics-kpi.json`.
+- Installer runtime diagnostics must include:
+  - `diagnostics.phase_metrics`
+  - `diagnostics.command_diagnostics`
+  - `diagnostics.artifact_index`
+  - `diagnostics.failure_fingerprint`
+  - `diagnostics.developer_feedback`
+- Timeout/hang control must remain deterministic:
+  - smoke installer timeout (`Exercise-WorkspaceInstallerLocal.ps1`)
+  - runner-cli command timeout (`RunnerCliCommandTimeoutSeconds`)
+  - governance audit timeout (`GovernanceAuditTimeoutSeconds`)
+- KPI enforcement mode is staged:
+  - `burn_in_mode=advisory` allows merge/progress while publishing KPI debt.
+  - switch to `blocking` only after sustained KPI pass trend.
+
+## KPI Signal Workflows
+- `.github/workflows/workspace-installer-kpi-signal.yml` is the scheduled + dispatch KPI signal pipeline.
+- `.github/workflows/governance-debt-signal.yml` upserts governance debt visibility issues.
+- `installer-harness-self-hosted.yml` must collect diagnostics and KPI outputs as first-class artifacts.
+
 ## Post-Gate Docker Extension
 - After installer runtime gates are consistently green, add a Docker Desktop Windows-image lane that runs installer + `runner-cli ppl build` inside the LabVIEW-enabled image.
 - The Docker extension lane must run only after installer contract success and fail on runner-cli command/capability drift.

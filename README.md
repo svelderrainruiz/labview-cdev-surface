@@ -73,6 +73,51 @@ pwsh -NoProfile -File .\scripts\Invoke-WorkspaceInstallerIteration.ps1 `
   -MaxRuns 10
 ```
 
+## Diagnostics and KPI signal
+
+Installer runtime now emits first-class diagnostics (`diagnostics.schema_version = 1.0`) in `workspace-install-latest.json`, including:
+1. `diagnostics.phase_metrics`
+2. `diagnostics.command_diagnostics`
+3. `diagnostics.artifact_index`
+4. `diagnostics.failure_fingerprint`
+5. `diagnostics.developer_feedback`
+
+KPI policy is machine-readable in `diagnostics-kpi.json` and mirrored into payload at `workspace-governance-payload/workspace-governance/diagnostics-kpi.json`.
+
+Local KPI runbook (dry-run publish):
+
+```powershell
+$report = 'C:\dev-smoke-lvie\artifacts\workspace-install-latest.json'
+$diag = '.\artifacts\governance-debt\workspace-installer-diagnostics-latest.json'
+$kpi = '.\artifacts\governance-debt\workspace-installer-kpi-latest.json'
+$assert = '.\artifacts\governance-debt\workspace-installer-kpi-assertion-latest.json'
+
+pwsh -NoProfile -File .\scripts\Collect-WorkspaceInstallerDiagnostics.ps1 `
+  -ReportPath $report `
+  -KpiConfigPath .\diagnostics-kpi.json `
+  -OutputPath $diag
+
+pwsh -NoProfile -File .\scripts\Measure-WorkspaceInstallerKpis.ps1 `
+  -DiagnosticsPath $diag `
+  -KpiConfigPath .\diagnostics-kpi.json `
+  -ScopeProfile Harness `
+  -OutputPath $kpi
+
+pwsh -NoProfile -File .\scripts\Assert-WorkspaceInstallerKpis.ps1 `
+  -KpiReportPath $kpi `
+  -KpiConfigPath .\diagnostics-kpi.json `
+  -OutputPath $assert
+
+pwsh -NoProfile -File .\scripts\Publish-WorkspaceInstallerKpiSummary.ps1 `
+  -KpiReportPath $kpi `
+  -AssertionReportPath $assert
+```
+
+Operational workflows:
+1. `.github/workflows/workspace-installer-kpi-signal.yml` (nightly + dispatch KPI signal).
+2. `.github/workflows/governance-debt-signal.yml` (workspace debt issue upsert).
+3. `.github/workflows/installer-harness-self-hosted.yml` (full harness + KPI artifact bundle).
+
 ## Build in CI
 
 `CI Pipeline` always runs on GitHub-hosted Linux and is the required merge check.

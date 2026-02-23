@@ -15,6 +15,14 @@ param(
     [Alias('ExecutionContext')]
     [string]$InstallExecutionContext = '',
 
+    [Parameter()]
+    [ValidateRange(60, 7200)]
+    [int]$RunnerCliCommandTimeoutSeconds = 1800,
+
+    [Parameter()]
+    [ValidateRange(30, 1800)]
+    [int]$GovernanceAuditTimeoutSeconds = 300,
+
     [Parameter(Mandatory = $true)]
     [string]$OutputPath
 )
@@ -79,6 +87,363 @@ function Add-PostActionSequenceEntry {
         message = $Message
     }
     [void]$Sequence.Add([pscustomobject]$entry)
+}
+
+function Get-PlatformName {
+    if ($IsWindows) { return 'windows' }
+    if ($IsLinux) { return 'linux' }
+    if ($IsMacOS) { return 'macos' }
+    return 'unknown'
+}
+
+function Convert-ToStableSha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha.ComputeHash($bytes)
+    } finally {
+        $sha.Dispose()
+    }
+    return [BitConverter]::ToString($hashBytes).Replace('-', '').ToLowerInvariant()
+}
+
+function Resolve-ErrorTaxonomyTag {
+    param(
+        [Parameter()]
+        [string]$Message = ''
+    )
+
+    $candidate = [string]$Message
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return 'unexpected_shape'
+    }
+
+    if ($candidate -match '(?i)\btimeout|timed out|hang\b') { return 'orchestration_timeout' }
+    if ($candidate -match '(?i)\bproperty .* cannot be found|unexpected payload type|ConvertFrom-Json') { return 'unexpected_shape' }
+    if ($candidate -match '(?i)\bgovernance audit|branch[-_ ]protection|Assert-WorkspaceGovernance') { return 'governance_audit' }
+    if ($candidate -match '(?i)\bvip\b|vipc|vipm') { return 'vip_harness' }
+    if ($candidate -match '(?i)\bppl\b|labview .* capability|supported-bitness|LabVIEW .* not found') { return 'labview_capability' }
+    if ($candidate -match '(?i)\brunner-cli\b|metadata source_commit|SHA256 mismatch|bundle verification') { return 'runner_cli_contract' }
+    if ($candidate -match '(?i)\bpayload\b|workspace-governance|manifest') { return 'payload_contract' }
+    if ($candidate -match '(?i)Required command|not found on PATH|dependency') { return 'platform_dependency' }
+    return 'unexpected_shape'
+}
+
+function Get-ErrorTaxonomy {
+    param(
+        [Parameter()][AllowEmptyCollection()][string[]]$Errors = @(),
+        [Parameter()][AllowEmptyCollection()][string[]]$Warnings = @()
+    )
+
+    $tags = @()
+    foreach ($message in @($Errors + $Warnings)) {
+        $tags += Resolve-ErrorTaxonomyTag -Message ([string]$message)
+    }
+
+    return @($tags | Sort-Object -Unique)
+}
+
+function Get-PhaseMetrics {
+    param(
+        [Parameter()][AllowEmptyCollection()]
+        [System.Collections.ArrayList]$Sequence
+    )
+
+    $entries = @($Sequence)
+    $phaseMap = [ordered]@{}
+    $previousTimestamp = $null
+    foreach ($entry in $entries) {
+        $phase = [string]$entry.phase
+        if ([string]::IsNullOrWhiteSpace($phase)) {
+            continue
+        }
+
+        $parsedTimestamp = $null
+        [void][DateTime]::TryParse([string]$entry.timestamp_utc, [ref]$parsedTimestamp)
+        $durationFromPrevious = 0.0
+        if ($null -ne $previousTimestamp -and $null -ne $parsedTimestamp) {
+            $durationFromPrevious = [Math]::Max(0, ($parsedTimestamp - $previousTimestamp).TotalSeconds)
+        }
+        if ($null -ne $parsedTimestamp) {
+            $previousTimestamp = $parsedTimestamp
+        }
+
+        if (-not $phaseMap.Contains($phase)) {
+            $phaseMap[$phase] = [ordered]@{
+                occurrences = 0
+                total_duration_seconds = 0.0
+                last_status = ''
+                last_message = ''
+                last_bitness = ''
+                last_timestamp_utc = ''
+            }
+        }
+
+        $phaseMap[$phase].occurrences = [int]$phaseMap[$phase].occurrences + 1
+        $phaseMap[$phase].total_duration_seconds = [Math]::Round(([double]$phaseMap[$phase].total_duration_seconds + [double]$durationFromPrevious), 3)
+        $phaseMap[$phase].last_status = [string]$entry.status
+        $phaseMap[$phase].last_message = [string]$entry.message
+        $phaseMap[$phase].last_bitness = [string]$entry.bitness
+        $phaseMap[$phase].last_timestamp_utc = [string]$entry.timestamp_utc
+    }
+
+    $firstTimestamp = $null
+    $lastTimestamp = $null
+    if ($entries.Count -gt 0) {
+        [void][DateTime]::TryParse([string]$entries[0].timestamp_utc, [ref]$firstTimestamp)
+        [void][DateTime]::TryParse([string]$entries[-1].timestamp_utc, [ref]$lastTimestamp)
+    }
+
+    $totalDurationSeconds = 0.0
+    if ($null -ne $firstTimestamp -and $null -ne $lastTimestamp) {
+        $totalDurationSeconds = [Math]::Round([Math]::Max(0, ($lastTimestamp - $firstTimestamp).TotalSeconds), 3)
+    }
+
+    return [ordered]@{
+        total_duration_seconds = $totalDurationSeconds
+        phase_count = $phaseMap.Count
+        phases = $phaseMap
+    }
+}
+
+function Get-InstallerArtifactIndex {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WorkspaceRootPath,
+        [Parameter(Mandatory = $true)]
+        [string]$OutputReportPath,
+        [Parameter(Mandatory = $true)]
+        [string]$GovernanceReportPath,
+        [Parameter()]
+        [string]$RunnerTemp = ''
+    )
+
+    $harnessRoot = if ([string]::IsNullOrWhiteSpace($RunnerTemp)) { '' } else { Join-Path $RunnerTemp 'installer-harness' }
+    $artifacts = @(
+        [ordered]@{ id = 'workspace-install-latest.json'; path = $OutputReportPath; scope = 'installer' },
+        [ordered]@{ id = 'workspace-installer-launch.log'; path = Join-Path $WorkspaceRootPath 'artifacts\workspace-installer-launch.log'; scope = 'installer' },
+        [ordered]@{ id = 'workspace-installer-phase-summary.json'; path = Join-Path (Split-Path -Parent $OutputReportPath) 'workspace-installer-phase-summary.json'; scope = 'installer' },
+        [ordered]@{ id = 'workspace-governance-latest.json'; path = $GovernanceReportPath; scope = 'installer' },
+        [ordered]@{ id = 'workspace-installer-vip-build.json'; path = Join-Path $WorkspaceRootPath 'labview-icon-editor\builds\status\workspace-installer-vip-build.json'; scope = 'installer' },
+        [ordered]@{ id = 'harness-validation-report.json'; path = if ($harnessRoot -ne '') { Join-Path $harnessRoot 'harness-validation-report.json' } else { '' }; scope = 'harness' },
+        [ordered]@{ id = 'runner-baseline-report.json'; path = if ($harnessRoot -ne '') { Join-Path $harnessRoot 'runner-baseline-report.json' } else { '' }; scope = 'harness' },
+        [ordered]@{ id = 'machine-preflight-report.json'; path = if ($harnessRoot -ne '') { Join-Path $harnessRoot 'machine-preflight-report.json' } else { '' }; scope = 'harness' },
+        [ordered]@{ id = 'smoke-installer-timeout-diagnostics.json'; path = if ($harnessRoot -ne '') { Join-Path $harnessRoot 'run-001\smoke-installer-timeout-diagnostics.json' } else { '' }; scope = 'harness' }
+    )
+
+    return @($artifacts | ForEach-Object {
+        $resolvedPath = [string]$_.path
+        $isResolvable = -not [string]::IsNullOrWhiteSpace($resolvedPath)
+        [pscustomobject]@{
+            id = [string]$_.id
+            path = $resolvedPath
+            scope = [string]$_.scope
+            exists = if ($isResolvable) { [bool](Test-Path -LiteralPath $resolvedPath -PathType Leaf) } else { $false }
+            resolvable = $isResolvable
+        }
+    })
+}
+
+function Get-DeveloperFeedback {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Status,
+        [Parameter()][AllowEmptyCollection()][string[]]$Errors = @(),
+        [Parameter()][AllowEmptyCollection()][string[]]$Warnings = @(),
+        [Parameter()][AllowEmptyCollection()][string[]]$Taxonomy = @(),
+        [Parameter()][AllowEmptyCollection()]$ArtifactIndex = @(),
+        [Parameter()][AllowEmptyCollection()]$PostActionSequence = @()
+    )
+
+    $nextActions = @()
+    if (@($Taxonomy) -contains 'orchestration_timeout') {
+        $nextActions += 'Inspect workspace-installer-launch.log and smoke-installer-timeout-diagnostics.json for the blocked process.'
+    }
+    if (@($Taxonomy) -contains 'vip_harness') {
+        $nextActions += 'Inspect workspace-installer-vip-build.json and VIPM logs under labview-icon-editor/builds/logs/vipm/.'
+    }
+    if (@($Taxonomy) -contains 'governance_audit') {
+        $nextActions += 'Inspect workspace-governance-latest.json and branch-protection contract failures.'
+    }
+    if (@($Taxonomy) -contains 'runner_cli_contract') {
+        $nextActions += 'Verify runner-cli bundle files (exe/sha256/metadata) and manifest pin alignment.'
+    }
+    if (@($Taxonomy) -contains 'labview_capability') {
+        $nextActions += 'Check LabVIEW install roots and required bitness support for PPL/VIP gates.'
+    }
+    if (@($Taxonomy) -contains 'payload_contract') {
+        $nextActions += 'Verify workspace-governance payload files were copied to the workspace root.'
+    }
+    if ($nextActions.Count -eq 0) {
+        $nextActions += 'Inspect errors[] and post_action_sequence for the first failing phase.'
+    }
+
+    $failureSummaryCompleteness = 0.0
+    if ($Status -eq 'succeeded') {
+        $failureSummaryCompleteness = 1.0
+    } else {
+        if (@($Errors).Count -gt 0) { $failureSummaryCompleteness += 0.25 }
+        if (@($Taxonomy).Count -gt 0) { $failureSummaryCompleteness += 0.25 }
+        if (@($nextActions).Count -gt 0) { $failureSummaryCompleteness += 0.25 }
+        if (@($ArtifactIndex | Where-Object { $_.id -eq 'workspace-installer-launch.log' -and $_.exists }).Count -gt 0) {
+            $failureSummaryCompleteness += 0.25
+        }
+    }
+
+    $estimatedDiagnoseMinutes = if ($Status -eq 'succeeded') { 5 } elseif (@($Taxonomy) -contains 'orchestration_timeout') { 12 } else { 15 }
+
+    $firstFailing = @(
+        $PostActionSequence |
+            Where-Object { [string]$_.status -in @('fail', 'failed', 'blocked') } |
+            Select-Object -First 1
+    )
+
+    return [ordered]@{
+        summary = if ($Status -eq 'succeeded') { 'Installer completed successfully with diagnostics attached.' } else { 'Installer failed; follow next_actions and artifact pointers for one-pass triage.' }
+        next_actions = @($nextActions | Select-Object -Unique)
+        estimated_time_to_diagnose_minutes = $estimatedDiagnoseMinutes
+        actionable_error_count = @($Errors).Count
+        warning_count = @($Warnings).Count
+        failure_summary_completeness = [Math]::Round($failureSummaryCompleteness, 3)
+        first_failing_phase = if (@($firstFailing).Count -gt 0) { [string]$firstFailing[0].phase } else { '' }
+    }
+}
+
+function Invoke-PowerShellFileWithTimeout {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter()]
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds
+    )
+
+    return Invoke-ExecutableWithTimeout `
+        -FilePath 'pwsh' `
+        -Arguments (@('-NoProfile', '-File', $FilePath) + @($Arguments)) `
+        -TimeoutSeconds $TimeoutSeconds
+}
+
+function Get-TimeoutProcessTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessId
+    )
+
+    if (-not $IsWindows) {
+        return [ordered]@{
+            process = $null
+            child_processes = @()
+        }
+    }
+
+    $process = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $ProcessId) -ErrorAction SilentlyContinue
+    $children = @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ParentProcessId -eq $ProcessId }
+    )
+
+    return [ordered]@{
+        process = if ($null -ne $process) {
+            [ordered]@{
+                pid = [int]$process.ProcessId
+                parent_pid = [int]$process.ParentProcessId
+                name = [string]$process.Name
+                executable = [string]$process.ExecutablePath
+                command_line = [string]$process.CommandLine
+            }
+        } else {
+            $null
+        }
+        child_processes = @(
+            $children | ForEach-Object {
+                [ordered]@{
+                    pid = [int]$_.ProcessId
+                    parent_pid = [int]$_.ParentProcessId
+                    name = [string]$_.Name
+                    executable = [string]$_.ExecutablePath
+                    command_line = [string]$_.CommandLine
+                }
+            }
+        )
+    }
+}
+
+function Invoke-ExecutableWithTimeout {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter()]
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds,
+        [Parameter()]
+        [string]$WorkingDirectory = ''
+    )
+
+    $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("workspace-installer-stdout-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("workspace-installer-stderr-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    $startUtc = (Get-Date).ToUniversalTime()
+
+    try {
+        $startProcessParams = @{
+            FilePath = $FilePath
+            ArgumentList = @($Arguments)
+            PassThru = $true
+            NoNewWindow = $true
+            RedirectStandardOutput = $stdoutPath
+            RedirectStandardError = $stderrPath
+        }
+        if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+            $startProcessParams['WorkingDirectory'] = $WorkingDirectory
+        }
+
+        $process = Start-Process `
+            @startProcessParams
+
+        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+        $timeoutProcessTree = [ordered]@{
+            process = $null
+            child_processes = @()
+        }
+        if ($timedOut) {
+            $timeoutProcessTree = Get-TimeoutProcessTree -ProcessId $process.Id
+            try {
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            } catch {
+                # Keep timeout semantics even if process already exited.
+            }
+            foreach ($child in @($timeoutProcessTree.child_processes)) {
+                try {
+                    Stop-Process -Id ([int]$child.pid) -Force -ErrorAction Stop
+                } catch {
+                    # Child process may already be gone; keep timeout semantics.
+                }
+            }
+        }
+
+        $durationSeconds = [Math]::Round([Math]::Max(0, ((Get-Date).ToUniversalTime() - $startUtc).TotalSeconds), 3)
+        $stdoutLines = if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue) } else { @() }
+        $stderrLines = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue) } else { @() }
+        $combined = @($stdoutLines + $stderrLines) | ForEach-Object { [string]$_ }
+
+        return [pscustomobject]@{
+            timed_out = $timedOut
+            exit_code = if ($timedOut) { 124 } else { $process.ExitCode }
+            duration_seconds = $durationSeconds
+            output = @($combined)
+            timeout_process_tree = $timeoutProcessTree
+        }
+    } finally {
+        if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 function Get-LabVIEWInstallRoot {
@@ -385,7 +750,9 @@ function Invoke-RunnerCliPplCapabilityCheck {
         [string]$RunnerCliLabviewVersion,
         [Parameter(Mandatory = $true)]
         [ValidateSet('32', '64')]
-        [string]$RequiredBitness
+        [string]$RequiredBitness,
+        [Parameter(Mandatory = $true)]
+        [int]$CommandTimeoutSeconds
     )
 
     $statusRoot = Join-Path -Path $IconEditorRepoPath -ChildPath 'builds\status'
@@ -402,6 +769,13 @@ function Invoke-RunnerCliPplCapabilityCheck {
         output_ppl_snapshot_path = Join-Path $statusRoot ("workspace-installer-ppl-{0}.lvlibp" -f $RequiredBitness)
         command = @()
         command_output = @()
+        command_timeout_seconds = $CommandTimeoutSeconds
+        timed_out = $false
+        timeout_process_tree = [ordered]@{
+            process = $null
+            child_processes = @()
+        }
+        duration_seconds = 0.0
         exit_code = $null
         labview_install_root = ''
     }
@@ -443,9 +817,19 @@ function Invoke-RunnerCliPplCapabilityCheck {
         Set-RunnerCliPreflightEnvironment `
             -RunnerCliPath $RunnerCliPath `
             -WorktreeRoot (Split-Path -Parent $IconEditorRepoPath)
-        $commandOutput = & $RunnerCliPath @commandArgs 2>&1
-        $result.command_output = @($commandOutput | ForEach-Object { [string]$_ })
-        $result.exit_code = $LASTEXITCODE
+        $commandInvocation = Invoke-ExecutableWithTimeout `
+            -FilePath $RunnerCliPath `
+            -Arguments $commandArgs `
+            -TimeoutSeconds $CommandTimeoutSeconds `
+            -WorkingDirectory $IconEditorRepoPath
+        $result.command_output = @($commandInvocation.output | ForEach-Object { [string]$_ })
+        $result.timed_out = [bool]$commandInvocation.timed_out
+        $result.timeout_process_tree = $commandInvocation.timeout_process_tree
+        $result.duration_seconds = [double]$commandInvocation.duration_seconds
+        $result.exit_code = $commandInvocation.exit_code
+        if ($result.timed_out) {
+            throw "runner-cli ppl build timed out after $CommandTimeoutSeconds seconds."
+        }
         if ($result.exit_code -ne 0) {
             $outputSummary = [string]::Join(' | ', @($result.command_output | Select-Object -First 20))
             throw "runner-cli ppl build failed with exit code $($result.exit_code). Output: $outputSummary"
@@ -482,7 +866,9 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         [Parameter(Mandatory = $true)]
         [string]$RunnerCliLabviewVersion,
         [Parameter(Mandatory = $true)]
-        [string]$RequiredBitness
+        [string]$RequiredBitness,
+        [Parameter(Mandatory = $true)]
+        [int]$CommandTimeoutSeconds
     )
 
     $statusRoot = Join-Path -Path $IconEditorRepoPath -ChildPath 'builds\status'
@@ -513,6 +899,18 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             vipc_apply = @()
             vip_build = @()
         }
+        command_output = [ordered]@{
+            vipc_assert = @()
+            vipc_apply = @()
+            vip_build = @()
+        }
+        command_timeout_seconds = $CommandTimeoutSeconds
+        timed_out = $false
+        timeout_process_tree = [ordered]@{
+            process = $null
+            child_processes = @()
+        }
+        duration_seconds = 0.0
         exit_code = $null
         labview_install_root = ''
     }
@@ -579,8 +977,19 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         Set-RunnerCliPreflightEnvironment `
             -RunnerCliPath $RunnerCliPath `
             -WorktreeRoot (Split-Path -Parent $IconEditorRepoPath)
-        & $RunnerCliPath @vipcAssertArgs
-        $vipcAssertExit = $LASTEXITCODE
+        $vipcAssertInvocation = Invoke-ExecutableWithTimeout `
+            -FilePath $RunnerCliPath `
+            -Arguments $vipcAssertArgs `
+            -TimeoutSeconds $CommandTimeoutSeconds `
+            -WorkingDirectory $IconEditorRepoPath
+        $result.command_output.vipc_assert = @($vipcAssertInvocation.output | ForEach-Object { [string]$_ })
+        $result.duration_seconds = [double]$result.duration_seconds + [double]$vipcAssertInvocation.duration_seconds
+        $result.timed_out = [bool]$vipcAssertInvocation.timed_out
+        if ($result.timed_out) {
+            $result.timeout_process_tree = $vipcAssertInvocation.timeout_process_tree
+            throw "runner-cli vipc assert timed out after $CommandTimeoutSeconds seconds."
+        }
+        $vipcAssertExit = $vipcAssertInvocation.exit_code
         if ($vipcAssertExit -ne 0) {
             $vipcApplyArgs = @(
                 'vipc', 'apply',
@@ -592,15 +1001,41 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             )
             $result.command.vipc_apply = @($vipcApplyArgs)
             Write-InstallerFeedback -Message 'VIPC assert reported dependency drift; applying VIPC dependencies.'
-            & $RunnerCliPath @vipcApplyArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "runner-cli vipc apply failed with exit code $LASTEXITCODE."
+            $vipcApplyInvocation = Invoke-ExecutableWithTimeout `
+                -FilePath $RunnerCliPath `
+                -Arguments $vipcApplyArgs `
+                -TimeoutSeconds $CommandTimeoutSeconds `
+                -WorkingDirectory $IconEditorRepoPath
+            $result.command_output.vipc_apply = @($vipcApplyInvocation.output | ForEach-Object { [string]$_ })
+            $result.duration_seconds = [double]$result.duration_seconds + [double]$vipcApplyInvocation.duration_seconds
+            if ([bool]$vipcApplyInvocation.timed_out) {
+                $result.timed_out = $true
+                $result.timeout_process_tree = $vipcApplyInvocation.timeout_process_tree
+                throw "runner-cli vipc apply timed out after $CommandTimeoutSeconds seconds."
+            }
+            $vipcApplyExit = $vipcApplyInvocation.exit_code
+            if ($vipcApplyExit -ne 0) {
+                $applySummary = [string]::Join(' | ', @($result.command_output.vipc_apply | Select-Object -First 20))
+                throw "runner-cli vipc apply failed with exit code $vipcApplyExit. Output: $applySummary"
             }
 
             Write-InstallerFeedback -Message 'Re-running runner-cli vipc assert after apply.'
-            & $RunnerCliPath @vipcAssertArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "runner-cli vipc assert failed after apply with exit code $LASTEXITCODE."
+            $vipcAssertAfterApplyInvocation = Invoke-ExecutableWithTimeout `
+                -FilePath $RunnerCliPath `
+                -Arguments $vipcAssertArgs `
+                -TimeoutSeconds $CommandTimeoutSeconds `
+                -WorkingDirectory $IconEditorRepoPath
+            $result.command_output.vipc_assert += @($vipcAssertAfterApplyInvocation.output | ForEach-Object { [string]$_ })
+            $result.duration_seconds = [double]$result.duration_seconds + [double]$vipcAssertAfterApplyInvocation.duration_seconds
+            if ([bool]$vipcAssertAfterApplyInvocation.timed_out) {
+                $result.timed_out = $true
+                $result.timeout_process_tree = $vipcAssertAfterApplyInvocation.timeout_process_tree
+                throw "runner-cli vipc assert timed out after apply ($CommandTimeoutSeconds seconds)."
+            }
+            $vipcAssertAfterApplyExit = $vipcAssertAfterApplyInvocation.exit_code
+            if ($vipcAssertAfterApplyExit -ne 0) {
+                $assertSummary = [string]::Join(' | ', @($result.command_output.vipc_assert | Select-Object -First 20))
+                throw "runner-cli vipc assert failed after apply with exit code $vipcAssertAfterApplyExit. Output: $assertSummary"
             }
         }
 
@@ -625,10 +1060,22 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         )
         $result.command.vip_build = @($vipBuildArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vip build.'
-        & $RunnerCliPath @vipBuildArgs
-        $result.exit_code = $LASTEXITCODE
+        $vipBuildInvocation = Invoke-ExecutableWithTimeout `
+            -FilePath $RunnerCliPath `
+            -Arguments $vipBuildArgs `
+            -TimeoutSeconds $CommandTimeoutSeconds `
+            -WorkingDirectory $IconEditorRepoPath
+        $result.command_output.vip_build = @($vipBuildInvocation.output | ForEach-Object { [string]$_ })
+        $result.duration_seconds = [double]$result.duration_seconds + [double]$vipBuildInvocation.duration_seconds
+        $result.timed_out = [bool]$vipBuildInvocation.timed_out
+        if ($result.timed_out) {
+            $result.timeout_process_tree = $vipBuildInvocation.timeout_process_tree
+            throw "runner-cli vip build timed out after $CommandTimeoutSeconds seconds."
+        }
+        $result.exit_code = $vipBuildInvocation.exit_code
         if ($result.exit_code -ne 0) {
-            throw "runner-cli vip build failed with exit code $($result.exit_code)."
+            $buildSummary = [string]::Join(' | ', @($result.command_output.vip_build | Select-Object -First 20))
+            throw "runner-cli vip build failed with exit code $($result.exit_code). Output: $buildSummary"
         }
 
         $vipPath = ''
@@ -715,6 +1162,14 @@ $pplCapabilityChecks = [ordered]@{
         output_ppl_path = ''
         output_ppl_snapshot_path = ''
         command = @()
+        command_output = @()
+        command_timeout_seconds = $RunnerCliCommandTimeoutSeconds
+        timed_out = $false
+        timeout_process_tree = [ordered]@{
+            process = $null
+            child_processes = @()
+        }
+        duration_seconds = 0.0
         exit_code = $null
         labview_install_root = ''
     }
@@ -729,6 +1184,14 @@ $pplCapabilityChecks = [ordered]@{
         output_ppl_path = ''
         output_ppl_snapshot_path = ''
         command = @()
+        command_output = @()
+        command_timeout_seconds = $RunnerCliCommandTimeoutSeconds
+        timed_out = $false
+        timeout_process_tree = [ordered]@{
+            process = $null
+            child_processes = @()
+        }
+        duration_seconds = 0.0
         exit_code = $null
         labview_install_root = ''
     }
@@ -753,6 +1216,18 @@ $vipPackageBuildCheck = [ordered]@{
         vipc_apply = @()
         vip_build = @()
     }
+    command_output = [ordered]@{
+        vipc_assert = @()
+        vipc_apply = @()
+        vip_build = @()
+    }
+    command_timeout_seconds = $RunnerCliCommandTimeoutSeconds
+    timed_out = $false
+    timeout_process_tree = [ordered]@{
+        process = $null
+        child_processes = @()
+    }
+    duration_seconds = 0.0
     exit_code = $null
     labview_install_root = ''
 }
@@ -761,6 +1236,14 @@ $governanceAudit = [ordered]@{
     status = 'not_run'
     exit_code = $null
     report_path = Join-Path $resolvedWorkspaceRoot 'artifacts\workspace-governance-latest.json'
+    command_timeout_seconds = $GovernanceAuditTimeoutSeconds
+    timed_out = $false
+    timeout_process_tree = [ordered]@{
+        process = $null
+        child_processes = @()
+    }
+    duration_seconds = 0.0
+    command_output = @()
     branch_only_failure = $false
     branch_failures = @()
     non_branch_failures = @()
@@ -1067,6 +1550,7 @@ try {
     $payloadFiles = @(
         @{ source = (Join-Path $payloadRoot 'AGENTS.md'); destination = (Join-Path $resolvedWorkspaceRoot 'AGENTS.md') },
         @{ source = (Join-Path $payloadRoot 'workspace-governance.json'); destination = (Join-Path $resolvedWorkspaceRoot 'workspace-governance.json') },
+        @{ source = (Join-Path $payloadRoot 'diagnostics-kpi.json'); destination = (Join-Path $resolvedWorkspaceRoot 'diagnostics-kpi.json') },
         @{ source = (Join-Path $payloadRoot 'scripts\Assert-WorkspaceGovernance.ps1'); destination = (Join-Path $resolvedWorkspaceRoot 'scripts\Assert-WorkspaceGovernance.ps1') },
         @{ source = (Join-Path $payloadRoot 'scripts\Test-PolicyContracts.ps1'); destination = (Join-Path $resolvedWorkspaceRoot 'scripts\Test-PolicyContracts.ps1') },
         @{ source = (Join-Path $payloadRoot 'tools\runner-cli\win-x64\runner-cli.exe'); destination = (Join-Path $resolvedWorkspaceRoot 'tools\runner-cli\win-x64\runner-cli.exe') },
@@ -1254,7 +1738,8 @@ try {
                     -PinnedSha $iconEditorPinnedSha `
                     -ExecutionLabviewYear ([string]$requiredLabviewYear) `
                     -RunnerCliLabviewVersion ([string]$runnerCliLabviewVersion) `
-                    -RequiredBitness $bitness
+                    -RequiredBitness $bitness `
+                    -CommandTimeoutSeconds $RunnerCliCommandTimeoutSeconds
 
                 $pplCapabilityChecks[$bitness] = [ordered]@{
                     status = [string]$capabilityResult.status
@@ -1267,6 +1752,11 @@ try {
                     output_ppl_path = [string]$capabilityResult.output_ppl_path
                     output_ppl_snapshot_path = [string]$capabilityResult.output_ppl_snapshot_path
                     command = @($capabilityResult.command)
+                    command_output = @($capabilityResult.command_output)
+                    command_timeout_seconds = $capabilityResult.command_timeout_seconds
+                    timed_out = [bool]$capabilityResult.timed_out
+                    timeout_process_tree = $capabilityResult.timeout_process_tree
+                    duration_seconds = $capabilityResult.duration_seconds
                     exit_code = $capabilityResult.exit_code
                     labview_install_root = [string]$capabilityResult.labview_install_root
                 }
@@ -1296,7 +1786,19 @@ try {
                     -PinnedSha $iconEditorPinnedSha `
                     -ExecutionLabviewYear ([string]$requiredLabviewYear) `
                     -RunnerCliLabviewVersion ([string]$runnerCliLabviewVersion) `
-                    -RequiredBitness ([string]$requiredVipBitness)
+                    -RequiredBitness ([string]$requiredVipBitness) `
+                    -CommandTimeoutSeconds $RunnerCliCommandTimeoutSeconds
+
+                $vipResultHasStatus = ($null -ne $vipResult) -and ($vipResult.PSObject.Properties.Name -contains 'status')
+                if (-not $vipResultHasStatus) {
+                    $vipResultType = if ($null -eq $vipResult) { 'null' } else { $vipResult.GetType().FullName }
+                    $vipResultPreview = if ($null -eq $vipResult) {
+                        ''
+                    } else {
+                        [string]::Join(' | ', @($vipResult | Select-Object -First 5 | ForEach-Object { [string]$_ }))
+                    }
+                    throw "VIP harness returned unexpected payload type '$vipResultType'. Preview: $vipResultPreview"
+                }
 
                 $vipPackageBuildCheck = [ordered]@{
                     status = [string]$vipResult.status
@@ -1318,6 +1820,15 @@ try {
                         vipc_apply = @($vipResult.command.vipc_apply)
                         vip_build = @($vipResult.command.vip_build)
                     }
+                    command_output = [ordered]@{
+                        vipc_assert = @($vipResult.command_output.vipc_assert)
+                        vipc_apply = @($vipResult.command_output.vipc_apply)
+                        vip_build = @($vipResult.command_output.vip_build)
+                    }
+                    command_timeout_seconds = $vipResult.command_timeout_seconds
+                    timed_out = [bool]$vipResult.timed_out
+                    timeout_process_tree = $vipResult.timeout_process_tree
+                    duration_seconds = $vipResult.duration_seconds
                     exit_code = $vipResult.exit_code
                     labview_install_root = [string]$vipResult.labview_install_root
                 }
@@ -1347,10 +1858,26 @@ try {
     if ((Test-Path -LiteralPath $assertScriptPath -PathType Leaf) -and (Test-Path -LiteralPath $workspaceManifestPath -PathType Leaf)) {
         Write-InstallerFeedback -Message 'Running workspace governance audit.'
         $governanceAudit.invoked = $true
-        & pwsh -NoProfile -File $assertScriptPath -WorkspaceRoot $resolvedWorkspaceRoot -ManifestPath $workspaceManifestPath -Mode Audit -OutputPath $auditOutputPath
-        $governanceAudit.exit_code = $LASTEXITCODE
+        $auditInvocation = Invoke-PowerShellFileWithTimeout `
+            -FilePath $assertScriptPath `
+            -Arguments @(
+                '-WorkspaceRoot', $resolvedWorkspaceRoot,
+                '-ManifestPath', $workspaceManifestPath,
+                '-Mode', 'Audit',
+                '-OutputPath', $auditOutputPath
+            ) `
+            -TimeoutSeconds $GovernanceAuditTimeoutSeconds
+        $governanceAudit.exit_code = $auditInvocation.exit_code
+        $governanceAudit.command_output = @($auditInvocation.output)
+        $governanceAudit.timed_out = [bool]$auditInvocation.timed_out
+        $governanceAudit.timeout_process_tree = $auditInvocation.timeout_process_tree
+        $governanceAudit.duration_seconds = [double]$auditInvocation.duration_seconds
 
-        if (Test-Path -LiteralPath $auditOutputPath -PathType Leaf) {
+        if ($governanceAudit.timed_out) {
+            $governanceAudit.status = 'fail'
+            $governanceAudit.message = "Governance audit timed out after $GovernanceAuditTimeoutSeconds seconds."
+            $errors += $governanceAudit.message
+        } elseif (Test-Path -LiteralPath $auditOutputPath -PathType Leaf) {
             $auditReport = Get-Content -LiteralPath $auditOutputPath -Raw | ConvertFrom-Json -ErrorAction Stop
             $failingRepos = @($auditReport.repositories | Where-Object { $_.status -eq 'fail' })
             $nonBranchFailures = @()
@@ -1407,10 +1934,122 @@ try {
         -Message ([string]$governanceAudit.message)
 } catch {
     $errors += $_.Exception.Message
+    Write-InstallerFeedback -Message ("Unhandled installer exception: {0}" -f $_.Exception.Message)
 }
 
 $status = if ($errors.Count -gt 0) { 'failed' } else { 'succeeded' }
 Write-InstallerFeedback -Message ("Completed with status: {0}" -f $status)
+$errorTaxonomy = Get-ErrorTaxonomy -Errors $errors -Warnings $warnings
+$phaseMetrics = Get-PhaseMetrics -Sequence $postActionSequence
+$phaseSummaryPath = Join-Path (Split-Path -Parent $resolvedOutputPath) 'workspace-installer-phase-summary.json'
+$phaseSummary = [ordered]@{
+    timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+    status = $status
+    mode = $Mode
+    execution_context = $InstallExecutionContext
+    phase_metrics = $phaseMetrics
+    post_action_sequence = $postActionSequence
+}
+$phaseSummary | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $phaseSummaryPath -Encoding UTF8
+
+$artifactIndex = Get-InstallerArtifactIndex `
+    -WorkspaceRootPath $resolvedWorkspaceRoot `
+    -OutputReportPath $resolvedOutputPath `
+    -GovernanceReportPath ([string]$governanceAudit.report_path) `
+    -RunnerTemp ([string]$env:RUNNER_TEMP)
+
+$firstFailingPhaseEntry = @(
+    $postActionSequence |
+        Where-Object { [string]$_.status -in @('fail', 'failed', 'blocked') } |
+        Select-Object -First 1
+)
+$failureFingerprintInput = [ordered]@{
+    status = $status
+    mode = $Mode
+    install_execution_context = $InstallExecutionContext
+    first_error = if (@($errors).Count -gt 0) { [string]$errors[0] } else { '' }
+    first_failing_phase = if (@($firstFailingPhaseEntry).Count -gt 0) { [string]$firstFailingPhaseEntry[0].phase } else { '' }
+    taxonomy = @($errorTaxonomy)
+}
+$failureFingerprintCanonical = $failureFingerprintInput | ConvertTo-Json -Depth 8 -Compress
+$failureFingerprint = [ordered]@{
+    hash = if ($status -eq 'succeeded') { '' } else { Convert-ToStableSha256 -Value $failureFingerprintCanonical }
+    canonical_input = $failureFingerprintInput
+}
+
+$developerFeedback = Get-DeveloperFeedback `
+    -Status $status `
+    -Errors $errors `
+    -Warnings $warnings `
+    -Taxonomy $errorTaxonomy `
+    -ArtifactIndex $artifactIndex `
+    -PostActionSequence $postActionSequence
+
+$commandDiagnostics = [ordered]@{
+    ppl_build = [ordered]@{
+        timeout_seconds = $RunnerCliCommandTimeoutSeconds
+        x32 = [ordered]@{
+            status = [string]$pplCapabilityChecks.'32'.status
+            exit_code = $pplCapabilityChecks.'32'.exit_code
+            timed_out = [bool]$pplCapabilityChecks.'32'.timed_out
+            duration_seconds = $pplCapabilityChecks.'32'.duration_seconds
+            output_preview = [string]::Join(' | ', @($pplCapabilityChecks.'32'.command_output | Select-Object -First 10))
+        }
+        x64 = [ordered]@{
+            status = [string]$pplCapabilityChecks.'64'.status
+            exit_code = $pplCapabilityChecks.'64'.exit_code
+            timed_out = [bool]$pplCapabilityChecks.'64'.timed_out
+            duration_seconds = $pplCapabilityChecks.'64'.duration_seconds
+            output_preview = [string]::Join(' | ', @($pplCapabilityChecks.'64'.command_output | Select-Object -First 10))
+        }
+    }
+    vip_harness = [ordered]@{
+        timeout_seconds = $RunnerCliCommandTimeoutSeconds
+        status = [string]$vipPackageBuildCheck.status
+        exit_code = $vipPackageBuildCheck.exit_code
+        timed_out = [bool]$vipPackageBuildCheck.timed_out
+        duration_seconds = $vipPackageBuildCheck.duration_seconds
+        output_preview = [ordered]@{
+            vipc_assert = [string]::Join(' | ', @($vipPackageBuildCheck.command_output.vipc_assert | Select-Object -First 10))
+            vipc_apply = [string]::Join(' | ', @($vipPackageBuildCheck.command_output.vipc_apply | Select-Object -First 10))
+            vip_build = [string]::Join(' | ', @($vipPackageBuildCheck.command_output.vip_build | Select-Object -First 10))
+        }
+    }
+    governance_audit = [ordered]@{
+        timeout_seconds = $GovernanceAuditTimeoutSeconds
+        status = [string]$governanceAudit.status
+        exit_code = $governanceAudit.exit_code
+        timed_out = [bool]$governanceAudit.timed_out
+        duration_seconds = $governanceAudit.duration_seconds
+        output_preview = [string]::Join(' | ', @($governanceAudit.command_output | Select-Object -First 10))
+    }
+}
+
+$diagnostics = [ordered]@{
+    schema_version = '1.0'
+    platform = [ordered]@{
+        name = Get-PlatformName
+        os_description = [string][System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+        os_architecture = [string][System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+        process_architecture = [string][System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+        powershell_edition = [string]$PSVersionTable.PSEdition
+        powershell_version = [string]$PSVersionTable.PSVersion
+    }
+    execution_context = [ordered]@{
+        mode = $Mode
+        install_execution_context = $InstallExecutionContext
+        is_container_execution = [bool]$labviewVersionResolution.is_container_execution
+        workspace_root = $resolvedWorkspaceRoot
+        output_path = $resolvedOutputPath
+        runner_temp = [string]$env:RUNNER_TEMP
+    }
+    phase_metrics = $phaseMetrics
+    command_diagnostics = $commandDiagnostics
+    artifact_index = $artifactIndex
+    failure_fingerprint = $failureFingerprint
+    developer_feedback = $developerFeedback
+}
+
 $report = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     status = $status
@@ -1428,6 +2067,7 @@ $report = [ordered]@{
     vip_package_build_check = $vipPackageBuildCheck
     post_action_sequence = $postActionSequence
     governance_audit = $governanceAudit
+    diagnostics = $diagnostics
     warnings = $warnings
     errors = $errors
 }
