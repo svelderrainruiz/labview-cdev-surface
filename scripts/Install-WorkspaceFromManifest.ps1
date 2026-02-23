@@ -12,7 +12,8 @@ param(
     [string]$Mode = 'Install',
 
     [Parameter()]
-    [string]$ExecutionContext = '',
+    [Alias('ExecutionContext')]
+    [string]$InstallExecutionContext = '',
 
     [Parameter(Mandatory = $true)]
     [string]$OutputPath
@@ -57,6 +58,7 @@ function Write-InstallerFeedback {
 function Add-PostActionSequenceEntry {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.ArrayList]$Sequence,
         [Parameter(Mandatory = $true)]
         [string]$Phase,
@@ -164,6 +166,166 @@ function Get-LatestVipPath {
     return [string]$latestVip.FullName
 }
 
+function Get-IsContainerExecution {
+    param(
+        [Parameter()]
+        [string]$InstallerExecutionContext = ''
+    )
+
+    $containerModeFlag = [string]$env:LVIE_INSTALLER_CONTAINER_MODE
+    if ($containerModeFlag -match '^(?i:1|true|yes)$') {
+        return $true
+    }
+
+    $dotnetContainerFlag = [string]$env:DOTNET_RUNNING_IN_CONTAINER
+    if ($dotnetContainerFlag -match '^(?i:1|true|yes)$') {
+        return $true
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($InstallerExecutionContext) -and $InstallerExecutionContext -match '(?i)container') {
+        return $true
+    }
+
+    if ($IsWindows) {
+        if (Test-Path -LiteralPath 'C:\.dockerenv' -PathType Leaf -ErrorAction SilentlyContinue) {
+            return $true
+        }
+    } else {
+        if (Test-Path -LiteralPath '/.dockerenv' -PathType Leaf -ErrorAction SilentlyContinue) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-LabVIEWContainerExecutionContract {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $contractPath = Join-Path -Path $RepoRoot -ChildPath '.lvcontainer'
+    $result = [ordered]@{
+        status = 'not_found'
+        contract_path = $contractPath
+        raw = ''
+        execution_year = ''
+        os = ''
+        message = ''
+    }
+
+    try {
+        if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) {
+            $result.message = ".lvcontainer was not found at '$contractPath'."
+            return [pscustomobject]$result
+        }
+
+        $raw = (Get-Content -LiteralPath $contractPath -Raw).Trim()
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            throw ".lvcontainer is empty: $contractPath"
+        }
+
+        $result.raw = $raw
+        if ($raw -match '^(?<year>\d{4})(?:q\d+)?-(?<os>linux|windows)$') {
+            $result.execution_year = [string]$Matches.year
+            $result.os = [string]$Matches.os
+            $result.status = 'resolved'
+            $result.message = "Resolved execution LabVIEW year '$($result.execution_year)' from .lvcontainer."
+            return [pscustomobject]$result
+        }
+
+        if ($raw -match '^latest-(?<os>linux|windows)$') {
+            $result.os = [string]$Matches.os
+            $result.status = 'unresolved_year'
+            $result.message = "Container tag '$raw' does not encode a specific LabVIEW year."
+            return [pscustomobject]$result
+        }
+
+        throw "Unsupported .lvcontainer value '$raw'. Expected '<year>q<quarter>-<os>' or 'latest-<os>'."
+    } catch {
+        $result.status = 'invalid'
+        $result.message = $_.Exception.Message
+        return [pscustomobject]$result
+    }
+}
+
+function Get-LabVIEWSourceVersionFromRepo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $versionPath = Join-Path -Path $RepoRoot -ChildPath '.lvversion'
+    if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
+        return ''
+    }
+
+    return [string]((Get-Content -LiteralPath $versionPath -Raw).Trim())
+}
+
+function Unblock-ExecutableForAutomation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $result = [ordered]@{
+        status = 'skipped'
+        message = ''
+        attempted = $false
+    }
+
+    if (-not $IsWindows) {
+        $result.message = 'Unblock step is only applicable on Windows.'
+        return [pscustomobject]$result
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        $result.message = "Executable not found for unblock step: $Path"
+        return [pscustomobject]$result
+    }
+
+    $result.attempted = $true
+    try {
+        Unblock-File -LiteralPath $Path -ErrorAction Stop
+        $result.status = 'unblocked'
+        $result.message = "Unblocked executable '$Path'."
+    } catch {
+        $zoneIdentifierPath = '{0}:Zone.Identifier' -f $Path
+        try {
+            if (Test-Path -LiteralPath $zoneIdentifierPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $zoneIdentifierPath -Force -ErrorAction Stop
+                $result.status = 'zone_identifier_removed'
+                $result.message = "Removed Zone.Identifier from '$Path'."
+            } else {
+                $result.status = 'warning'
+                $result.message = "Unable to unblock '$Path'. $($_.Exception.Message)"
+            }
+        } catch {
+            $result.status = 'warning'
+            $result.message = "Unable to unblock '$Path'. $($_.Exception.Message)"
+        }
+    }
+
+    return [pscustomobject]$result
+}
+
+function Set-RunnerCliPreflightEnvironment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RunnerCliPath,
+        [Parameter()]
+        [string]$WorktreeRoot = ''
+    )
+
+    $env:LVIE_RUNNER_CLI_PATH = $RunnerCliPath
+    $env:LVIE_RUNNER_CLI_SKIP_BUILD = '1'
+    $env:LVIE_RUNNER_CLI_SKIP_DOWNLOAD = '1'
+    if (-not [string]::IsNullOrWhiteSpace($WorktreeRoot)) {
+        $env:LVIE_WORKTREE_ROOT = $WorktreeRoot
+    }
+}
+
 function Invoke-RunnerCliPplCapabilityCheck {
     param(
         [Parameter(Mandatory = $true)]
@@ -173,7 +335,9 @@ function Invoke-RunnerCliPplCapabilityCheck {
         [Parameter(Mandatory = $true)]
         [string]$PinnedSha,
         [Parameter(Mandatory = $true)]
-        [string]$RequiredLabviewYear,
+        [string]$ExecutionLabviewYear,
+        [Parameter(Mandatory = $true)]
+        [string]$RunnerCliLabviewVersion,
         [Parameter(Mandatory = $true)]
         [ValidateSet('32', '64')]
         [string]$RequiredBitness
@@ -186,11 +350,13 @@ function Invoke-RunnerCliPplCapabilityCheck {
         message = ''
         runner_cli_path = $RunnerCliPath
         repo_path = $IconEditorRepoPath
-        required_labview_year = $RequiredLabviewYear
+        required_labview_year = $ExecutionLabviewYear
+        runner_cli_labview_version = $RunnerCliLabviewVersion
         required_bitness = $RequiredBitness
         output_ppl_path = Join-Path $IconEditorRepoPath 'resource\plugins\lv_icon.lvlibp'
         output_ppl_snapshot_path = Join-Path $statusRoot ("workspace-installer-ppl-{0}.lvlibp" -f $RequiredBitness)
         command = @()
+        command_output = @()
         exit_code = $null
         labview_install_root = ''
     }
@@ -208,9 +374,9 @@ function Invoke-RunnerCliPplCapabilityCheck {
 
         Ensure-Directory -Path $statusRoot
 
-        $labviewRoot = Get-LabVIEWInstallRoot -VersionYear $RequiredLabviewYear -Bitness $RequiredBitness
+        $labviewRoot = Get-LabVIEWInstallRoot -VersionYear $ExecutionLabviewYear -Bitness $RequiredBitness
         if ([string]::IsNullOrWhiteSpace($labviewRoot)) {
-            throw "LabVIEW $RequiredLabviewYear ($RequiredBitness-bit) is required for runner-cli PPL capability but was not found."
+            throw "LabVIEW $ExecutionLabviewYear ($RequiredBitness-bit) is required for runner-cli PPL capability but was not found."
         }
         $result.labview_install_root = $labviewRoot
 
@@ -218,20 +384,26 @@ function Invoke-RunnerCliPplCapabilityCheck {
         $commandArgs = @(
             'ppl', 'build',
             '--repo-root', $IconEditorRepoPath,
-            '--labview-version', $RequiredLabviewYear,
+            '--labview-version', $RunnerCliLabviewVersion,
             '--supported-bitness', $RequiredBitness,
             '--major', '0',
             '--minor', '0',
             '--patch', '0',
             '--build', '1',
-            '--commit', $commitArg
+            '--commit', $commitArg,
+            '--skip-worktree-root-check'
         )
         $result.command = @($commandArgs)
 
-        & $RunnerCliPath @commandArgs
+        Set-RunnerCliPreflightEnvironment `
+            -RunnerCliPath $RunnerCliPath `
+            -WorktreeRoot (Split-Path -Parent $IconEditorRepoPath)
+        $commandOutput = & $RunnerCliPath @commandArgs 2>&1
+        $result.command_output = @($commandOutput | ForEach-Object { [string]$_ })
         $result.exit_code = $LASTEXITCODE
         if ($result.exit_code -ne 0) {
-            throw "runner-cli ppl build failed with exit code $($result.exit_code)."
+            $outputSummary = [string]::Join(' | ', @($result.command_output | Select-Object -First 20))
+            throw "runner-cli ppl build failed with exit code $($result.exit_code). Output: $outputSummary"
         }
 
         if (-not (Test-Path -LiteralPath $result.output_ppl_path -PathType Leaf)) {
@@ -240,7 +412,7 @@ function Invoke-RunnerCliPplCapabilityCheck {
         Copy-Item -LiteralPath $result.output_ppl_path -Destination $result.output_ppl_snapshot_path -Force
 
         $result.status = 'pass'
-        $result.message = "runner-cli PPL capability check passed for LabVIEW $RequiredLabviewYear x$RequiredBitness."
+        $result.message = "runner-cli PPL capability check passed for execution LabVIEW $ExecutionLabviewYear x$RequiredBitness (source version $RunnerCliLabviewVersion)."
     } catch {
         if ($null -eq $result.exit_code) {
             $result.exit_code = 1
@@ -261,7 +433,9 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         [Parameter(Mandatory = $true)]
         [string]$PinnedSha,
         [Parameter(Mandatory = $true)]
-        [string]$RequiredLabviewYear,
+        [string]$ExecutionLabviewYear,
+        [Parameter(Mandatory = $true)]
+        [string]$RunnerCliLabviewVersion,
         [Parameter(Mandatory = $true)]
         [string]$RequiredBitness
     )
@@ -279,7 +453,8 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
         message = ''
         runner_cli_path = $RunnerCliPath
         repo_path = $IconEditorRepoPath
-        required_labview_year = $RequiredLabviewYear
+        required_labview_year = $ExecutionLabviewYear
+        runner_cli_labview_version = $RunnerCliLabviewVersion
         required_bitness = $RequiredBitness
         vipb_path = $vipbPath
         vipc_path = $vipcPath
@@ -311,9 +486,9 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             throw "VIP harness currently supports only 64-bit execution. requested=$RequiredBitness"
         }
 
-        $labviewRoot = Get-LabVIEWInstallRoot -VersionYear $RequiredLabviewYear -Bitness $RequiredBitness
+        $labviewRoot = Get-LabVIEWInstallRoot -VersionYear $ExecutionLabviewYear -Bitness $RequiredBitness
         if ([string]::IsNullOrWhiteSpace($labviewRoot)) {
-            throw "LabVIEW $RequiredLabviewYear ($RequiredBitness-bit) is required for runner-cli VIP harness but was not found."
+            throw "LabVIEW $ExecutionLabviewYear ($RequiredBitness-bit) is required for runner-cli VIP harness but was not found."
         }
         $result.labview_install_root = $labviewRoot
 
@@ -350,12 +525,15 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             '--repo-root', $IconEditorRepoPath,
             '--supported-bitness', $RequiredBitness,
             '--vipc-path', $vipcPath,
-            '--labview-version', $RequiredLabviewYear,
+            '--labview-version', $RunnerCliLabviewVersion,
             '--output-path', $vipcAuditPath,
             '--fail-on-mismatch'
         )
         $result.command.vipc_assert = @($vipcAssertArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vipc assert.'
+        Set-RunnerCliPreflightEnvironment `
+            -RunnerCliPath $RunnerCliPath `
+            -WorktreeRoot (Split-Path -Parent $IconEditorRepoPath)
         & $RunnerCliPath @vipcAssertArgs
         $vipcAssertExit = $LASTEXITCODE
         if ($vipcAssertExit -ne 0) {
@@ -364,7 +542,8 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
                 '--repo-root', $IconEditorRepoPath,
                 '--supported-bitness', $RequiredBitness,
                 '--vipc-path', $vipcPath,
-                '--labview-version', $RequiredLabviewYear
+                '--labview-version', $RunnerCliLabviewVersion,
+                '--skip-worktree-root-check'
             )
             $result.command.vipc_apply = @($vipcApplyArgs)
             Write-InstallerFeedback -Message 'VIPC assert reported dependency drift; applying VIPC dependencies.'
@@ -386,7 +565,7 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             '--repo-root', $IconEditorRepoPath,
             '--supported-bitness', $RequiredBitness,
             '--vipb-path', $vipbPath,
-            '--labview-version', $RequiredLabviewYear,
+            '--labview-version', $RunnerCliLabviewVersion,
             '--labview-minor-revision', '0',
             '--major', '0',
             '--minor', '0',
@@ -396,7 +575,8 @@ function Invoke-RunnerCliVipPackageHarnessCheck {
             '--release-notes-file', $releaseNotesPath,
             '--display-information-json-path', $displayInfoPath,
             '--status-path', $vipBuildStatusPath,
-            '--vipm-timeout-seconds', '1200'
+            '--vipm-timeout-seconds', '1200',
+            '--skip-worktree-root-check'
         )
         $result.command.vip_build = @($vipBuildArgs)
         Write-InstallerFeedback -Message 'Running runner-cli vip build.'
@@ -460,6 +640,16 @@ $runnerCliBundle = [ordered]@{
     metadata_file = ''
     expected_sha256 = ''
     actual_sha256 = ''
+    unblock_status = 'not_run'
+    unblock_message = ''
+}
+$labviewVersionResolution = [ordered]@{
+    is_container_execution = $false
+    lvcontainer_path = ''
+    lvcontainer_raw = ''
+    execution_labview_year = '2020'
+    runner_cli_labview_version = '2020'
+    message = ''
 }
 $pplCapabilityChecks = [ordered]@{
     '32' = [ordered]@{
@@ -468,6 +658,7 @@ $pplCapabilityChecks = [ordered]@{
         runner_cli_path = ''
         repo_path = ''
         required_labview_year = '2020'
+        runner_cli_labview_version = '2020'
         required_bitness = '32'
         output_ppl_path = ''
         output_ppl_snapshot_path = ''
@@ -481,6 +672,7 @@ $pplCapabilityChecks = [ordered]@{
         runner_cli_path = ''
         repo_path = ''
         required_labview_year = '2020'
+        runner_cli_labview_version = '2020'
         required_bitness = '64'
         output_ppl_path = ''
         output_ppl_snapshot_path = ''
@@ -495,6 +687,7 @@ $vipPackageBuildCheck = [ordered]@{
     runner_cli_path = ''
     repo_path = ''
     required_labview_year = '2020'
+    runner_cli_labview_version = '2020'
     required_bitness = '64'
     vipb_path = ''
     vipc_path = ''
@@ -555,27 +748,28 @@ try {
     $requiredLabviewYear = '2020'
     $requiredPplBitnesses = @('32', '64')
     $requiredVipBitness = '64'
+    $skipVipHarness = ([string]$env:LVIE_SKIP_VIP_HARNESS -match '^(?i:1|true|yes)$')
     $runnerCliRelativeRoot = 'tools\runner-cli\win-x64'
     if ($null -ne $manifest.PSObject.Properties['installer_contract']) {
         $installerContract = $manifest.installer_contract
         if ($null -ne $installerContract.PSObject.Properties['labview_gate']) {
             $labviewGate = $installerContract.labview_gate
-            if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_year)) {
+            if (($null -ne $labviewGate.PSObject.Properties['required_year']) -and -not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_year)) {
                 $requiredLabviewYear = [string]$labviewGate.required_year
             }
             if ($null -ne $labviewGate.PSObject.Properties['required_ppl_bitnesses']) {
                 $requiredPplBitnesses = @($labviewGate.required_ppl_bitnesses)
             }
-            if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_vip_bitness)) {
+            if (($null -ne $labviewGate.PSObject.Properties['required_vip_bitness']) -and -not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_vip_bitness)) {
                 $requiredVipBitness = [string]$labviewGate.required_vip_bitness
             }
-            if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_bitness)) {
+            if (($null -ne $labviewGate.PSObject.Properties['required_bitness']) -and -not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_bitness)) {
                 $requiredVipBitness = [string]$labviewGate.required_bitness
             }
         }
         if ($null -ne $installerContract.PSObject.Properties['runner_cli_bundle']) {
             $runnerCliBundleContract = $installerContract.runner_cli_bundle
-            if (-not [string]::IsNullOrWhiteSpace([string]$runnerCliBundleContract.relative_root)) {
+            if (($null -ne $runnerCliBundleContract.PSObject.Properties['relative_root']) -and -not [string]::IsNullOrWhiteSpace([string]$runnerCliBundleContract.relative_root)) {
                 $runnerCliRelativeRoot = [string]$runnerCliBundleContract.relative_root
             }
         }
@@ -588,27 +782,36 @@ try {
             Select-Object -Unique |
             Sort-Object)
     )
-    if (($requiredPplBitnesses -join ',') -ne '32,64') {
-        throw "Installer contract requires dual PPL bitness gating ['32','64']; received '$([string]::Join(',', @($requiredPplBitnesses)))'."
+    if (@($requiredPplBitnesses).Count -eq 0) {
+        throw "Installer contract requires at least one supported PPL bitness ['32','64']."
     }
-    if ($requiredVipBitness -ne '64') {
-        throw "Installer contract requires VIP bitness '64'; received '$requiredVipBitness'."
+    if ($requiredVipBitness -notin @('32', '64')) {
+        throw "Installer contract requires VIP bitness to be one of ['32','64']; received '$requiredVipBitness'."
+    }
+    if ($requiredVipBitness -notin $requiredPplBitnesses) {
+        throw "Installer contract requires VIP bitness '$requiredVipBitness' to be included in required_ppl_bitnesses."
+    }
+    $runnerCliLabviewVersion = [string]$requiredLabviewYear
+    if ($skipVipHarness) {
+        Write-InstallerFeedback -Message 'VIP harness is disabled by LVIE_SKIP_VIP_HARNESS.'
     }
 
     if ($Mode -eq 'Install') {
-        if ([string]::IsNullOrWhiteSpace($ExecutionContext)) {
+        if ([string]::IsNullOrWhiteSpace($InstallExecutionContext)) {
             throw "Install mode requires -ExecutionContext NsisInstall (or LocalInstallerExercise)."
         }
-        if ($ExecutionContext -notin @('NsisInstall', 'LocalInstallerExercise')) {
-            throw "Unsupported execution context '$ExecutionContext'. Expected NsisInstall or LocalInstallerExercise."
+        if ($InstallExecutionContext -notin @('NsisInstall', 'LocalInstallerExercise')) {
+            throw "Unsupported execution context '$InstallExecutionContext'. Expected NsisInstall or LocalInstallerExercise."
         }
     }
 
     foreach ($bitness in $requiredPplBitnesses) {
         $pplCapabilityChecks[$bitness].required_labview_year = $requiredLabviewYear
+        $pplCapabilityChecks[$bitness].runner_cli_labview_version = $runnerCliLabviewVersion
         $pplCapabilityChecks[$bitness].required_bitness = $bitness
     }
     $vipPackageBuildCheck.required_labview_year = $requiredLabviewYear
+    $vipPackageBuildCheck.runner_cli_labview_version = $runnerCliLabviewVersion
     $vipPackageBuildCheck.required_bitness = $requiredVipBitness
 
     $repoTotal = @($manifest.managed_repos).Count
@@ -863,6 +1066,54 @@ try {
     $iconEditorRepoPath = if ($null -ne $iconEditorRepoEntry) { [string]$iconEditorRepoEntry.path } else { '' }
     $iconEditorPinnedSha = if ($null -ne $iconEditorRepoEntry) { ([string]$iconEditorRepoEntry.pinned_sha).ToLowerInvariant() } else { '' }
 
+    $labviewVersionResolution.is_container_execution = Get-IsContainerExecution -InstallerExecutionContext $InstallExecutionContext
+    $labviewVersionResolution.execution_labview_year = [string]$requiredLabviewYear
+    $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+    if (-not [string]::IsNullOrWhiteSpace($iconEditorRepoPath)) {
+        if ($labviewVersionResolution.is_container_execution) {
+            $containerContract = Get-LabVIEWContainerExecutionContract -RepoRoot $iconEditorRepoPath
+            $labviewVersionResolution.lvcontainer_path = [string]$containerContract.contract_path
+            $labviewVersionResolution.lvcontainer_raw = [string]$containerContract.raw
+
+            if ([string]$containerContract.status -eq 'resolved') {
+                $requiredLabviewYear = [string]$containerContract.execution_year
+                $runnerCliLabviewVersion = [string]$containerContract.execution_year
+                $labviewVersionResolution.execution_labview_year = [string]$requiredLabviewYear
+                $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+                $labviewVersionResolution.message = "Container execution resolved execution and runner-cli source version from .lvcontainer: '$([string]$containerContract.raw)' => '$requiredLabviewYear'. .lvversion is ignored in container execution."
+                Write-InstallerFeedback -Message ("Container LabVIEW contract resolved from .lvcontainer: execution_year={0}; source_version={1}; tag={2}; source_contract=.lvcontainer" -f $requiredLabviewYear, $runnerCliLabviewVersion, [string]$containerContract.raw)
+            } else {
+                $warnings += "Container execution detected but .lvcontainer could not resolve an execution year. $([string]$containerContract.message)"
+                Write-InstallerFeedback -Message ("Container LabVIEW contract warning: {0}" -f [string]$containerContract.message)
+
+                $sourceVersionRaw = Get-LabVIEWSourceVersionFromRepo -RepoRoot $iconEditorRepoPath
+                if (-not [string]::IsNullOrWhiteSpace($sourceVersionRaw)) {
+                    $runnerCliLabviewVersion = [string]$sourceVersionRaw
+                    $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+                    $warnings += "Container execution fell back to '.lvversion' source contract because .lvcontainer was unresolved."
+                } else {
+                    $warnings += "LabVIEW source version file '.lvversion' was not found at '$iconEditorRepoPath'; runner-cli will use execution year '$requiredLabviewYear' as source version."
+                }
+            }
+        } else {
+            $sourceVersionRaw = Get-LabVIEWSourceVersionFromRepo -RepoRoot $iconEditorRepoPath
+            if (-not [string]::IsNullOrWhiteSpace($sourceVersionRaw)) {
+                $runnerCliLabviewVersion = [string]$sourceVersionRaw
+                $labviewVersionResolution.runner_cli_labview_version = [string]$runnerCliLabviewVersion
+                $labviewVersionResolution.message = "runner-cli source LabVIEW version resolved from .lvversion: '$runnerCliLabviewVersion'."
+            } else {
+                $warnings += "LabVIEW source version file '.lvversion' was not found at '$iconEditorRepoPath'; runner-cli will use execution year '$requiredLabviewYear' as source version."
+            }
+        }
+    }
+
+    foreach ($bitness in $requiredPplBitnesses) {
+        $pplCapabilityChecks[$bitness].required_labview_year = $requiredLabviewYear
+        $pplCapabilityChecks[$bitness].runner_cli_labview_version = $runnerCliLabviewVersion
+    }
+    $vipPackageBuildCheck.required_labview_year = $requiredLabviewYear
+    $vipPackageBuildCheck.runner_cli_labview_version = $runnerCliLabviewVersion
+
     try {
         Write-InstallerFeedback -Message 'Verifying bundled runner-cli integrity.'
         if ([string]::IsNullOrWhiteSpace($iconEditorRepoPath)) {
@@ -893,6 +1144,15 @@ try {
         }
         if ($metadataSourceCommit -ne $iconEditorPinnedSha) {
             throw "runner-cli metadata source_commit does not match manifest pin for labview-icon-editor."
+        }
+
+        $unblockResult = Unblock-ExecutableForAutomation -Path $runnerCliExePath
+        $runnerCliBundle.unblock_status = [string]$unblockResult.status
+        $runnerCliBundle.unblock_message = [string]$unblockResult.message
+        if ([string]$unblockResult.status -eq 'warning') {
+            $warnings += "runner-cli unblock warning. $([string]$unblockResult.message)"
+        } else {
+            Write-InstallerFeedback -Message ([string]$unblockResult.message)
         }
 
         $runnerCliBundle.status = 'pass'
@@ -929,7 +1189,8 @@ try {
                     -RunnerCliPath $runnerCliExePath `
                     -IconEditorRepoPath $iconEditorRepoPath `
                     -PinnedSha $iconEditorPinnedSha `
-                    -RequiredLabviewYear ([string]$requiredLabviewYear) `
+                    -ExecutionLabviewYear ([string]$requiredLabviewYear) `
+                    -RunnerCliLabviewVersion ([string]$runnerCliLabviewVersion) `
                     -RequiredBitness $bitness
 
                 $pplCapabilityChecks[$bitness] = [ordered]@{
@@ -938,6 +1199,7 @@ try {
                     runner_cli_path = [string]$capabilityResult.runner_cli_path
                     repo_path = [string]$capabilityResult.repo_path
                     required_labview_year = [string]$capabilityResult.required_labview_year
+                    runner_cli_labview_version = [string]$capabilityResult.runner_cli_labview_version
                     required_bitness = [string]$capabilityResult.required_bitness
                     output_ppl_path = [string]$capabilityResult.output_ppl_path
                     output_ppl_snapshot_path = [string]$capabilityResult.output_ppl_snapshot_path
@@ -958,13 +1220,19 @@ try {
                 $vipPackageBuildCheck.status = 'blocked'
                 $vipPackageBuildCheck.message = 'VIP harness was not run because one or more PPL capability checks failed.'
                 Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
+            } elseif ($skipVipHarness) {
+                $vipPackageBuildCheck.status = 'skipped'
+                $vipPackageBuildCheck.message = 'VIP harness was skipped by LVIE_SKIP_VIP_HARNESS.'
+                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'skipped' -Message $vipPackageBuildCheck.message
+                Write-InstallerFeedback -Message $vipPackageBuildCheck.message
             } else {
                 Write-InstallerFeedback -Message 'Running runner-cli VI Package harness gate.'
                 $vipResult = Invoke-RunnerCliVipPackageHarnessCheck `
                     -RunnerCliPath $runnerCliExePath `
                     -IconEditorRepoPath $iconEditorRepoPath `
                     -PinnedSha $iconEditorPinnedSha `
-                    -RequiredLabviewYear ([string]$requiredLabviewYear) `
+                    -ExecutionLabviewYear ([string]$requiredLabviewYear) `
+                    -RunnerCliLabviewVersion ([string]$runnerCliLabviewVersion) `
                     -RequiredBitness ([string]$requiredVipBitness)
 
                 $vipPackageBuildCheck = [ordered]@{
@@ -973,6 +1241,7 @@ try {
                     runner_cli_path = [string]$vipResult.runner_cli_path
                     repo_path = [string]$vipResult.repo_path
                     required_labview_year = [string]$vipResult.required_labview_year
+                    runner_cli_labview_version = [string]$vipResult.runner_cli_labview_version
                     required_bitness = [string]$vipResult.required_bitness
                     vipb_path = [string]$vipResult.vipb_path
                     vipc_path = [string]$vipResult.vipc_path
@@ -1083,7 +1352,7 @@ $report = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     status = $status
     mode = $Mode
-    execution_context = $ExecutionContext
+    execution_context = $InstallExecutionContext
     workspace_root = $resolvedWorkspaceRoot
     manifest_path = $resolvedManifestPath
     output_path = $resolvedOutputPath
@@ -1091,6 +1360,7 @@ $report = [ordered]@{
     payload_sync = $payloadSync
     repositories = $repositoryResults
     runner_cli_bundle = $runnerCliBundle
+    labview_version_resolution = $labviewVersionResolution
     ppl_capability_checks = $pplCapabilityChecks
     vip_package_build_check = $vipPackageBuildCheck
     post_action_sequence = $postActionSequence

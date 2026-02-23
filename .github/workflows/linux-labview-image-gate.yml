@@ -1,0 +1,69 @@
+name: linux-labview-image-gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      labview_linux_image:
+        description: Linux LabVIEW container image reference
+        required: false
+        type: string
+        default: nationalinstruments/labview:2026q1-linux
+
+permissions:
+  contents: read
+
+jobs:
+  linux-labview-image-gate:
+    name: Linux LabVIEW Image Gate
+    runs-on: [self-hosted, windows, self-hosted-windows-lv]
+    env:
+      LABVIEW_LINUX_IMAGE: ${{ inputs.labview_linux_image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run linux LabVIEW image gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\linux-image-gate'
+          if (Test-Path -LiteralPath $gateRoot -PathType Container) {
+            Remove-Item -LiteralPath $gateRoot -Recurse -Force
+          }
+          New-Item -Path $gateRoot -ItemType Directory -Force | Out-Null
+
+          & pwsh -NoProfile -File "$env:GITHUB_WORKSPACE/scripts/Invoke-DockerDesktopLinuxIteration.ps1" `
+            -Image $env:LABVIEW_LINUX_IMAGE `
+            -DockerContext 'desktop-linux' `
+            -ManifestPath (Join-Path $env:GITHUB_WORKSPACE 'workspace-governance.json') `
+            -OutputRoot $gateRoot `
+            -SkipPester
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Linux LabVIEW image gate failed.'
+          }
+
+          $iterationReportPath = Join-Path $gateRoot 'docker-linux-iteration-report.json'
+          if (-not (Test-Path -LiteralPath $iterationReportPath -PathType Leaf)) {
+            throw "Linux image gate report missing: $iterationReportPath"
+          }
+          $iterationReport = Get-Content -LiteralPath $iterationReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          if ([string]$iterationReport.status -ne 'succeeded') {
+            throw "Linux image gate status is not succeeded: $([string]$iterationReport.status)"
+          }
+          if ($null -eq $iterationReport.container_report) {
+            throw 'Linux image gate container report is missing.'
+          }
+          if ([string]$iterationReport.container_report.status -ne 'succeeded') {
+            throw "Container report status is not succeeded: $([string]$iterationReport.container_report.status)"
+          }
+          if ([string]$iterationReport.image -ne $env:LABVIEW_LINUX_IMAGE) {
+            throw "Linux image gate used unexpected image. expected=$env:LABVIEW_LINUX_IMAGE actual=$([string]$iterationReport.image)"
+          }
+
+      - name: Upload linux image gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-labview-image-gate-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate
+          if-no-files-found: error

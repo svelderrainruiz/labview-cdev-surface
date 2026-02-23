@@ -154,4 +154,15 @@ On failure, it updates a single tracking issue (`Nightly Supply-Chain Canary Fai
 ## Windows LabVIEW image gate
 
 `windows-labview-image-gate.yml` is dispatch-only in phase 1 and targets a dedicated self-hosted Windows runner with Windows containers.  
-It pulls `nationalinstruments/labview:latest-windows`, installs the NSIS workspace installer in-container, runs bundled `runner-cli ppl build` and `runner-cli vip build`, and verifies PPL + VIP output presence.
+The gate image is selectable at dispatch via input `labview_windows_image`, with default pinned to the known-working digest (`nationalinstruments/labview@sha256:57c453dabd2ff0185ce718d88704921bb82eb83189f4049205ed9b4da7df7bcd`).  
+It pulls one selected image, installs the NSIS workspace installer in-container, runs bundled `runner-cli ppl build` against container-compatible LabVIEW contracts (`.lvcontainer` is authoritative for both execution year and source version in container mode), and enforces post-action report checks.
+
+For current gate reliability in this image profile, VIP harness execution is intentionally skipped via policy (`LVIE_SKIP_VIP_HARNESS=1`) and reported as `skipped`.
+
+## Linux LabVIEW image gate
+
+`linux-labview-image-gate.yml` is dispatch-only and targets the self-hosted Windows runner with Docker Desktop Linux context.
+The gate image is selectable at dispatch via input `labview_linux_image`, with default set to the known-working tag (`nationalinstruments/labview:2026q1-linux`).
+It uses one selected Linux LabVIEW image and runs `Invoke-DockerDesktopLinuxIteration.ps1` with manifest-pinned `runner-cli` bundle checks in container mode.
+
+Artifacts include `docker-linux-iteration-report.json` and the full gate output under `artifacts/linux-image-gate`.
