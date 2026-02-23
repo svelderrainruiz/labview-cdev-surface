@@ -161,6 +161,17 @@ jobs:
           $containerCmd = @'
           $ErrorActionPreference = "Stop"
 
+          $requiredCommands = @('powershell', 'git', 'gh', 'g-cli')
+          $missingCommands = @()
+          foreach ($name in $requiredCommands) {
+            if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
+              $missingCommands += $name
+            }
+          }
+          if ($missingCommands.Count -gt 0) {
+            throw "Container image missing required commands: $($missingCommands -join ', ')"
+          }
+
           $installerProcess = Start-Process `
             -FilePath "C:\workspace\artifacts\windows-image-gate\lvie-cdev-workspace-installer.exe" `
             -ArgumentList '/S' `
