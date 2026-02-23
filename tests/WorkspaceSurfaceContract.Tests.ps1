@@ -28,6 +28,7 @@ Describe 'Workspace surface contract' {
         $script:releaseWorkflowPath = Join-Path $script:repoRoot '.github/workflows/release-workspace-installer.yml'
         $script:canaryWorkflowPath = Join-Path $script:repoRoot '.github/workflows/nightly-supplychain-canary.yml'
         $script:windowsImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/windows-labview-image-gate.yml'
+        $script:linuxImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/linux-labview-image-gate.yml'
         $script:globalJsonPath = Join-Path $script:repoRoot 'global.json'
         $script:payloadAgentsPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/AGENTS.md'
         $script:payloadManifestPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/workspace-governance.json'
@@ -57,6 +58,7 @@ Describe 'Workspace surface contract' {
             $script:releaseWorkflowPath,
             $script:canaryWorkflowPath,
             $script:windowsImageGateWorkflowPath,
+            $script:linuxImageGateWorkflowPath,
             $script:globalJsonPath,
             $script:payloadAgentsPath,
             $script:payloadManifestPath,
@@ -133,6 +135,7 @@ Describe 'Workspace surface contract' {
         $script:ciWorkflowContent | Should -Match 'DockerDesktopLinuxIterationContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'RunnerCliBundleDeterminismContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'ProvenanceContract\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'LinuxLabviewImageGateWorkflowContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'CiWorkflowReliabilityContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'WorkspaceShaRefreshPrContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'WorkspaceManifestPinRefreshScript\.Tests\.ps1'
