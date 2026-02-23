@@ -395,6 +395,140 @@ function Get-TimeoutProcessTree {
     }
 }
 
+function Get-LabviewProcesses {
+    if (-not $IsWindows) {
+        return @()
+    }
+
+    return @(
+        Get-CimInstance Win32_Process -Filter "Name='LabVIEW.exe'" -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $commandLine = [string]$_.CommandLine
+                [ordered]@{
+                    pid = [int]$_.ProcessId
+                    executable = [string]$_.ExecutablePath
+                    command_line = $commandLine
+                    is_headless_labviewcli = (-not [string]::IsNullOrWhiteSpace($commandLine) -and $commandLine -match '(?i)--headless\s+-labviewcli')
+                }
+            }
+    )
+}
+
+function Stop-NewLabviewProcesses {
+    param(
+        [Parameter()]
+        [int[]]$BaselineProcessIds = @()
+    )
+
+    $result = [ordered]@{
+        attempted = $false
+        baseline_pids = @($BaselineProcessIds)
+        terminated = @()
+        failed = @()
+        message = ''
+    }
+
+    if (-not $IsWindows) {
+        $result.message = 'LabVIEW cleanup is only applicable on Windows.'
+        return [pscustomobject]$result
+    }
+
+    $result.attempted = $true
+    $active = @(Get-LabviewProcesses)
+    $newProcesses = @(
+        $active |
+            Where-Object { [int]$_.pid -notin @($BaselineProcessIds) }
+    )
+
+    foreach ($processInfo in $newProcesses) {
+        try {
+            Stop-Process -Id ([int]$processInfo.pid) -Force -ErrorAction Stop
+            $result.terminated += [ordered]@{
+                pid = [int]$processInfo.pid
+                executable = [string]$processInfo.executable
+                command_line = [string]$processInfo.command_line
+                is_headless_labviewcli = [bool]$processInfo.is_headless_labviewcli
+            }
+        } catch {
+            $result.failed += [ordered]@{
+                pid = [int]$processInfo.pid
+                executable = [string]$processInfo.executable
+                command_line = [string]$processInfo.command_line
+                is_headless_labviewcli = [bool]$processInfo.is_headless_labviewcli
+                error = $_.Exception.Message
+            }
+        }
+    }
+
+    $result.message = "LabVIEW cleanup terminated $(@($result.terminated).Count) process(es); failures=$(@($result.failed).Count)."
+    return [pscustomobject]$result
+}
+
+function Get-VipmProcesses {
+    if (-not $IsWindows) {
+        return @()
+    }
+
+    return @(
+        Get-CimInstance Win32_Process -Filter "Name='vipm.exe'" -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                [ordered]@{
+                    pid = [int]$_.ProcessId
+                    executable = [string]$_.ExecutablePath
+                    command_line = [string]$_.CommandLine
+                }
+            }
+    )
+}
+
+function Stop-NewVipmProcesses {
+    param(
+        [Parameter()]
+        [int[]]$BaselineProcessIds = @()
+    )
+
+    $result = [ordered]@{
+        attempted = $false
+        baseline_pids = @($BaselineProcessIds)
+        terminated = @()
+        failed = @()
+        message = ''
+    }
+
+    if (-not $IsWindows) {
+        $result.message = 'VIPM cleanup is only applicable on Windows.'
+        return [pscustomobject]$result
+    }
+
+    $result.attempted = $true
+    $active = @(Get-VipmProcesses)
+    $newProcesses = @(
+        $active |
+            Where-Object { [int]$_.pid -notin @($BaselineProcessIds) }
+    )
+
+    foreach ($processInfo in $newProcesses) {
+        try {
+            Stop-Process -Id ([int]$processInfo.pid) -Force -ErrorAction Stop
+            $result.terminated += [ordered]@{
+                pid = [int]$processInfo.pid
+                executable = [string]$processInfo.executable
+                command_line = [string]$processInfo.command_line
+            }
+        } catch {
+            $result.failed += [ordered]@{
+                pid = [int]$processInfo.pid
+                executable = [string]$processInfo.executable
+                command_line = [string]$processInfo.command_line
+                error = $_.Exception.Message
+            }
+        }
+    }
+
+    $result.message = "VIPM cleanup terminated $(@($result.terminated).Count) process(es); failures=$(@($result.failed).Count)."
+    return [pscustomobject]$result
+}
+
 function Convert-ToProcessArgumentString {
     param(
         [Parameter()]
@@ -1305,6 +1439,26 @@ $governanceAudit = [ordered]@{
     message = ''
 }
 $postActionSequence = New-Object System.Collections.ArrayList
+$initialLabviewPids = @(
+    Get-LabviewProcesses | ForEach-Object { [int]$_.pid }
+)
+$initialVipmPids = @(
+    Get-VipmProcesses | ForEach-Object { [int]$_.pid }
+)
+$labviewProcessCleanup = [ordered]@{
+    attempted = $false
+    baseline_pids = @($initialLabviewPids)
+    terminated = @()
+    failed = @()
+    message = ''
+}
+$vipmProcessCleanup = [ordered]@{
+    attempted = $false
+    baseline_pids = @($initialVipmPids)
+    terminated = @()
+    failed = @()
+    message = ''
+}
 
 try {
     Write-InstallerFeedback -Message ("Starting workspace {0} run. workspace={1}" -f $Mode.ToLowerInvariant(), $resolvedWorkspaceRoot)
@@ -1995,6 +2149,46 @@ try {
     Write-InstallerFeedback -Message ("Unhandled installer exception: {0}" -f $_.Exception.Message)
 }
 
+$labviewProcessCleanup = Stop-NewLabviewProcesses -BaselineProcessIds $initialLabviewPids
+$labviewCleanupStatus = if (-not [bool]$labviewProcessCleanup.attempted) {
+    'skipped'
+} elseif (@($labviewProcessCleanup.failed).Count -gt 0) {
+    'fail'
+} else {
+    'pass'
+}
+if (@($labviewProcessCleanup.failed).Count -gt 0) {
+    $warnings += "LabVIEW cleanup could not terminate all new LabVIEW.exe processes launched during install."
+}
+if ([bool]$labviewProcessCleanup.attempted) {
+    Write-InstallerFeedback -Message ([string]$labviewProcessCleanup.message)
+}
+Add-PostActionSequenceEntry `
+    -Sequence $postActionSequence `
+    -Phase 'labview-cleanup' `
+    -Status $labviewCleanupStatus `
+    -Message ([string]$labviewProcessCleanup.message)
+
+$vipmProcessCleanup = Stop-NewVipmProcesses -BaselineProcessIds $initialVipmPids
+$vipmCleanupStatus = if (-not [bool]$vipmProcessCleanup.attempted) {
+    'skipped'
+} elseif (@($vipmProcessCleanup.failed).Count -gt 0) {
+    'fail'
+} else {
+    'pass'
+}
+if (@($vipmProcessCleanup.failed).Count -gt 0) {
+    $warnings += "VIPM cleanup could not terminate all new vipm.exe processes."
+}
+if ([bool]$vipmProcessCleanup.attempted) {
+    Write-InstallerFeedback -Message ([string]$vipmProcessCleanup.message)
+}
+Add-PostActionSequenceEntry `
+    -Sequence $postActionSequence `
+    -Phase 'vipm-cleanup' `
+    -Status $vipmCleanupStatus `
+    -Message ([string]$vipmProcessCleanup.message)
+
 $status = if ($errors.Count -gt 0) { 'failed' } else { 'succeeded' }
 Write-InstallerFeedback -Message ("Completed with status: {0}" -f $status)
 $errorTaxonomy = Get-ErrorTaxonomy -Errors $errors -Warnings $warnings
@@ -2081,6 +2275,20 @@ $commandDiagnostics = [ordered]@{
         duration_seconds = $governanceAudit.duration_seconds
         output_preview = [string]::Join(' | ', @($governanceAudit.command_output | Select-Object -First 10))
     }
+    process_cleanup = [ordered]@{
+        labview = [ordered]@{
+            attempted = [bool]$labviewProcessCleanup.attempted
+            baseline_count = @($labviewProcessCleanup.baseline_pids).Count
+            terminated_count = @($labviewProcessCleanup.terminated).Count
+            failed_count = @($labviewProcessCleanup.failed).Count
+        }
+        vipm = [ordered]@{
+            attempted = [bool]$vipmProcessCleanup.attempted
+            baseline_count = @($vipmProcessCleanup.baseline_pids).Count
+            terminated_count = @($vipmProcessCleanup.terminated).Count
+            failed_count = @($vipmProcessCleanup.failed).Count
+        }
+    }
 }
 
 $diagnostics = [ordered]@{
@@ -2125,6 +2333,8 @@ $report = [ordered]@{
     vip_package_build_check = $vipPackageBuildCheck
     post_action_sequence = $postActionSequence
     governance_audit = $governanceAudit
+    labview_process_cleanup = $labviewProcessCleanup
+    vipm_process_cleanup = $vipmProcessCleanup
     diagnostics = $diagnostics
     warnings = $warnings
     errors = $errors

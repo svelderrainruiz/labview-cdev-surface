@@ -92,6 +92,9 @@ Describe 'Workspace installer developer experience diagnostics contract' {
         $script:installContent | Should -Match 'command_timeout_seconds'
         $script:installContent | Should -Match 'timed_out'
         $script:installContent | Should -Match 'timeout_process_tree'
+        $script:installContent | Should -Match 'process_cleanup = \[ordered\]@\{'
+        $script:installContent | Should -Match 'labview = \[ordered\]@\{'
+        $script:installContent | Should -Match 'vipm'
     }
 
     It 'has parse-safe PowerShell syntax in diagnostics scripts' {
