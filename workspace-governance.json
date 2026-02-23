@@ -221,7 +221,7 @@
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "95ec038725afe52734fe89e1c8578ce1ac649578"
+      "pinned_sha": "debd97fa975faa904aa292c8532a03d1c934cb41"
     },
     {
       "path": "C:\\dev\\labview-icon-editor-codex-skills",
@@ -319,7 +319,7 @@
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "2b0a32ac943e3c56db3c0a896b8b6895174f7e70"
+      "pinned_sha": "5ecb8bf99f4c730ac00e9cbb18e581738e63a000"
     },
     {
       "path": "C:\\dev\\labview-cdev-surface-upstream",
