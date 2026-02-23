@@ -22,6 +22,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Switch to Docker Desktop Linux engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & 'C:\Program Files\Docker\Docker\DockerCli.exe' -SwitchLinuxEngine
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to switch Docker to Linux engine.'
+          }
+
       - name: Run linux LabVIEW image gate
         shell: pwsh
         run: |

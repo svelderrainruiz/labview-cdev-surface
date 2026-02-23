@@ -58,13 +58,49 @@ function Get-OptionalFeatureStateSafe {
     }
 }
 
+function Resolve-DockerContextForLinuxIteration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PreferredContext
+    )
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($PreferredContext)) {
+        $candidates += $PreferredContext
+    }
+    if ($candidates -notcontains 'default') {
+        $candidates += 'default'
+    }
+
+    foreach ($context in $candidates) {
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            & docker --context $context version *> $null
+            if ($LASTEXITCODE -eq 0) {
+                return [pscustomobject]@{
+                    context = $context
+                    attempts = $attempt
+                    fallback_used = ($context -ne $PreferredContext)
+                }
+            }
+            Start-Sleep -Seconds 3
+        }
+    }
+
+    $hyperVState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Hyper-V-All'
+    $virtualMachinePlatformState = Get-OptionalFeatureStateSafe -FeatureName 'VirtualMachinePlatform'
+    $wslState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Windows-Subsystem-Linux'
+    $contextsText = [string]::Join(', ', $candidates)
+    throw ("docker version failed for contexts '{0}'. Ensure Docker Desktop Linux mode is running. Feature states: Microsoft-Hyper-V-All={1}; VirtualMachinePlatform={2}; Microsoft-Windows-Subsystem-Linux={3}" -f $contextsText, $hyperVState, $virtualMachinePlatformState, $wslState)
+}
+
 $repoRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..')).Path
 $resolvedManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
 $resolvedOutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 $bundleRoot = Join-Path $resolvedOutputRoot 'runner-cli-linux'
 $containerReportPath = Join-Path $resolvedOutputRoot 'container-report.json'
 $hostReportPath = Join-Path $resolvedOutputRoot 'docker-linux-iteration-report.json'
-$containerScriptHostPath = Join-Path $resolvedOutputRoot 'container-run.ps1'
+$containerScriptHostPathPs1 = Join-Path $resolvedOutputRoot 'container-run.ps1'
+$containerScriptHostPathSh = Join-Path $resolvedOutputRoot 'container-run.sh'
 $bundleScript = Join-Path $repoRoot 'scripts\Build-RunnerCliBundleFromManifest.ps1'
 
 foreach ($commandName in @('pwsh', 'git', 'dotnet', 'docker')) {
@@ -85,20 +121,55 @@ if (Test-Path -LiteralPath $containerReportPath -PathType Leaf) {
     Remove-Item -LiteralPath $containerReportPath -Force
 }
 
-& docker --context $DockerContext version *> $null
-if ($LASTEXITCODE -ne 0) {
-    $hyperVState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Hyper-V-All'
-    $virtualMachinePlatformState = Get-OptionalFeatureStateSafe -FeatureName 'VirtualMachinePlatform'
-    $wslState = Get-OptionalFeatureStateSafe -FeatureName 'Microsoft-Windows-Subsystem-Linux'
-    throw ("docker version failed for context '{0}'. Ensure Docker Desktop Linux mode is running. Feature states: Microsoft-Hyper-V-All={1}; VirtualMachinePlatform={2}; Microsoft-Windows-Subsystem-Linux={3}" -f $DockerContext, $hyperVState, $virtualMachinePlatformState, $wslState)
-}
+$contextProbe = Resolve-DockerContextForLinuxIteration -PreferredContext $DockerContext
+$effectiveDockerContext = [string]$contextProbe.context
+Write-Host ("[docker-linux-iteration] docker context resolved: requested={0}; effective={1}; attempts={2}; fallback={3}" -f $DockerContext, $effectiveDockerContext, [int]$contextProbe.attempts, [bool]$contextProbe.fallback_used)
 
 & pwsh -NoProfile -File $bundleScript -ManifestPath $resolvedManifestPath -OutputRoot $bundleRoot -RepoName $RepoName -Runtime $Runtime
 if ($LASTEXITCODE -ne 0) {
     throw "Build-RunnerCliBundleFromManifest.ps1 failed with exit code $LASTEXITCODE."
 }
 
-$containerScriptContent = @"
+$containerEntryPoint = @()
+$containerScriptPathUsed = ''
+if ($SkipPester) {
+    $containerScriptPathUsed = $containerScriptHostPathSh
+    $containerScriptContent = @"
+#!/bin/sh
+set -e
+
+runner_cli_source='/bundle/runner-cli.exe'
+if [ ! -f "`$runner_cli_source" ]; then
+  echo "Bundled runner-cli not found: `$runner_cli_source" >&2
+  exit 1
+fi
+
+runner_cli_path='/tmp/runner-cli'
+cp "`$runner_cli_source" "`$runner_cli_path"
+chmod +x "`$runner_cli_path"
+
+"`$runner_cli_path" --help > /tmp/runner-cli-help.log 2>&1
+"`$runner_cli_path" ppl --help > /tmp/runner-cli-ppl-help.log 2>&1
+
+timestamp_utc="`$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+cat > /hostout/container-report.json <<JSON
+{
+  "timestamp_utc": "`$timestamp_utc",
+  "status": "succeeded",
+  "image": "$Image",
+  "runtime": "$Runtime",
+  "runner_cli_help_log": "/tmp/runner-cli-help.log",
+  "runner_cli_ppl_help_log": "/tmp/runner-cli-ppl-help.log",
+  "pester_ran": false
+}
+JSON
+"@
+    $containerScriptContent = $containerScriptContent -replace "`r`n", "`n"
+    [System.IO.File]::WriteAllText($containerScriptHostPathSh, $containerScriptContent, (New-Object System.Text.UTF8Encoding($false)))
+    $containerEntryPoint = @('sh', '/hostout/container-run.sh')
+} else {
+    $containerScriptPathUsed = $containerScriptHostPathPs1
+    $containerScriptContent = @"
 param(
     [switch]`$SkipPester
 )
@@ -147,7 +218,12 @@ if (-not `$SkipPester) {
 } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath /hostout/container-report.json -Encoding utf8
 "@
 
-Set-Content -LiteralPath $containerScriptHostPath -Value $containerScriptContent -Encoding utf8
+    Set-Content -LiteralPath $containerScriptHostPathPs1 -Value $containerScriptContent -Encoding utf8
+    $containerEntryPoint = @('pwsh', '-NoProfile', '-File', '/hostout/container-run.ps1')
+    if ($SkipPester) {
+        $containerEntryPoint += '-SkipPester'
+    }
+}
 
 $dockerVolumeRepo = "{0}:/repo" -f $repoRoot
 $dockerVolumeBundle = "{0}:/bundle" -f $bundleRoot
@@ -159,19 +235,16 @@ $errors = @()
 
 try {
     $dockerArgs = @(
-        '--context', $DockerContext,
+        '--context', $effectiveDockerContext,
         'run',
         '--rm',
         '--name', $containerName,
         '-v', $dockerVolumeRepo,
         '-v', $dockerVolumeBundle,
         '-v', $dockerVolumeOutput,
-        $Image,
-        'pwsh', '-NoProfile', '-File', '/hostout/container-run.ps1'
+        $Image
     )
-    if ($SkipPester) {
-        $dockerArgs += '-SkipPester'
-    }
+    $dockerArgs += $containerEntryPoint
 
     & docker @dockerArgs
     $containerExitCode = $LASTEXITCODE
@@ -207,20 +280,25 @@ if (Test-Path -LiteralPath $containerReportPath -PathType Leaf) {
     status = $status
     image = $Image
     runtime = $Runtime
-    docker_context = $DockerContext
+    docker_context = $effectiveDockerContext
+    requested_docker_context = $DockerContext
     manifest_path = $resolvedManifestPath
     repo_name = $RepoName
     output_root = $resolvedOutputRoot
     bundle_root = $bundleRoot
-    container_script = $containerScriptHostPath
+    container_script = $containerScriptPathUsed
     container_exit_code = $containerExitCode
     skip_pester = [bool]$SkipPester
     container_report = $containerReport
     errors = $errors
 } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $hostReportPath -Encoding utf8
 
-if (-not $KeepContainerScript -and (Test-Path -LiteralPath $containerScriptHostPath -PathType Leaf)) {
-    Remove-Item -LiteralPath $containerScriptHostPath -Force
+if (-not $KeepContainerScript) {
+    foreach ($scriptPath in @($containerScriptHostPathPs1, $containerScriptHostPathSh)) {
+        if (Test-Path -LiteralPath $scriptPath -PathType Leaf) {
+            Remove-Item -LiteralPath $scriptPath -Force
+        }
+    }
 }
 
 Write-Host "Docker Linux iteration report: $hostReportPath"
