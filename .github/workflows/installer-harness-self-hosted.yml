@@ -200,6 +200,67 @@ jobs:
           } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $validationReportPath -Encoding utf8
           Write-Host "Harness validation report: $validationReportPath"
 
+      - name: Collect diagnostics and evaluate KPI burn-in
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'installer-harness'
+          $summaryPath = Join-Path $outputRoot 'iteration-summary.json'
+          if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) {
+            throw "Missing iteration summary: $summaryPath"
+          }
+
+          $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $runOutputRoot = [string]$summary.latest.output_root
+          if ([string]::IsNullOrWhiteSpace($runOutputRoot)) {
+            throw "Latest run output root was not captured in iteration summary."
+          }
+
+          $exerciseReportPath = Join-Path $runOutputRoot 'exercise-report.json'
+          if (-not (Test-Path -LiteralPath $exerciseReportPath -PathType Leaf)) {
+            throw "Missing exercise report: $exerciseReportPath"
+          }
+          $exerciseReport = Get-Content -LiteralPath $exerciseReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $smokeReportPath = [string]$exerciseReport.smoke_installer.report_path
+          if ([string]::IsNullOrWhiteSpace($smokeReportPath)) {
+            $smokeReportPath = 'C:\dev-smoke-lvie\artifacts\workspace-install-latest.json'
+          }
+          if (-not (Test-Path -LiteralPath $smokeReportPath -PathType Leaf)) {
+            throw "Missing smoke installer report: $smokeReportPath"
+          }
+
+          $diagnosticsPath = Join-Path $outputRoot 'workspace-installer-diagnostics-latest.json'
+          $kpiPath = Join-Path $outputRoot 'workspace-installer-kpi-latest.json'
+          $assertionPath = Join-Path $outputRoot 'workspace-installer-kpi-assertion-latest.json'
+          $summaryMdPath = Join-Path $outputRoot 'workspace-installer-kpi-summary.md'
+          $summaryJsonPath = Join-Path $outputRoot 'workspace-installer-kpi-summary.json'
+
+          & pwsh -NoProfile -File ./scripts/Collect-WorkspaceInstallerDiagnostics.ps1 `
+            -ReportPath $smokeReportPath `
+            -KpiConfigPath ./diagnostics-kpi.json `
+            -OutputPath $diagnosticsPath
+          if ($LASTEXITCODE -ne 0) { throw "Collect-WorkspaceInstallerDiagnostics.ps1 failed with exit code $LASTEXITCODE." }
+
+          & pwsh -NoProfile -File ./scripts/Measure-WorkspaceInstallerKpis.ps1 `
+            -DiagnosticsPath $diagnosticsPath `
+            -KpiConfigPath ./diagnostics-kpi.json `
+            -ScopeProfile Harness `
+            -OutputPath $kpiPath
+          if ($LASTEXITCODE -ne 0) { throw "Measure-WorkspaceInstallerKpis.ps1 failed with exit code $LASTEXITCODE." }
+
+          & pwsh -NoProfile -File ./scripts/Assert-WorkspaceInstallerKpis.ps1 `
+            -KpiReportPath $kpiPath `
+            -KpiConfigPath ./diagnostics-kpi.json `
+            -OutputPath $assertionPath
+          if ($LASTEXITCODE -ne 0) { throw "Assert-WorkspaceInstallerKpis.ps1 failed with exit code $LASTEXITCODE." }
+
+          & pwsh -NoProfile -File ./scripts/Publish-WorkspaceInstallerKpiSummary.ps1 `
+            -KpiReportPath $kpiPath `
+            -AssertionReportPath $assertionPath `
+            -OutputMarkdownPath $summaryMdPath `
+            -OutputJsonPath $summaryJsonPath
+          if ($LASTEXITCODE -ne 0) { throw "Publish-WorkspaceInstallerKpiSummary.ps1 failed with exit code $LASTEXITCODE." }
+
       - name: Upload installer harness artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -210,10 +271,17 @@ jobs:
             ${{ runner.temp }}/installer-harness/runner-baseline-report.json
             ${{ runner.temp }}/installer-harness/machine-preflight-report.json
             ${{ runner.temp }}/installer-harness/harness-validation-report.json
+            ${{ runner.temp }}/installer-harness/workspace-installer-diagnostics-latest.json
+            ${{ runner.temp }}/installer-harness/workspace-installer-kpi-latest.json
+            ${{ runner.temp }}/installer-harness/workspace-installer-kpi-assertion-latest.json
+            ${{ runner.temp }}/installer-harness/workspace-installer-kpi-summary.md
+            ${{ runner.temp }}/installer-harness/workspace-installer-kpi-summary.json
             ${{ runner.temp }}/installer-harness/run-001/exercise-report.json
+            ${{ runner.temp }}/installer-harness/run-001/smoke-installer-timeout-diagnostics.json
             ${{ runner.temp }}/installer-harness/run-001/lvie-cdev-workspace-installer-bundle.zip
             ${{ runner.temp }}/installer-harness/run-001/lvie-cdev-workspace-installer.exe.sha256
             ${{ runner.temp }}/dev-smoke-lvie/artifacts/workspace-install-latest.json
+            ${{ runner.temp }}/dev-smoke-lvie/artifacts/workspace-installer-phase-summary.json
             ${{ runner.temp }}/dev-smoke-lvie/artifacts/workspace-installer-launch.log
             ${{ runner.temp }}/dev-smoke-lvie/labview-icon-editor/builds/status/workspace-installer-vip-build.json
             ${{ runner.temp }}/dev-smoke-lvie/labview-icon-editor/builds/logs/vipm-build.log

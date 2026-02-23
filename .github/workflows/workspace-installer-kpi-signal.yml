@@ -1,0 +1,124 @@
+name: Workspace Installer KPI Signal
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Iteration mode for KPI signal run.
+        required: false
+        default: full
+        type: choice
+        options:
+          - fast
+          - full
+  schedule:
+    - cron: '30 4 * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: workspace-installer-kpi-signal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  kpi-signal:
+    name: Workspace Installer KPI Signal
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, installer-harness]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run installer iteration for KPI signal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mode = '${{ inputs.mode }}'
+          if ([string]::IsNullOrWhiteSpace($mode)) {
+            $mode = 'full'
+          }
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'installer-kpi-signal'
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'dev-smoke-kpi-signal'
+          & pwsh -NoProfile -File ./scripts/Invoke-WorkspaceInstallerIteration.ps1 `
+            -Mode $mode `
+            -Iterations 1 `
+            -OutputRoot $outputRoot `
+            -SmokeWorkspaceRoot $smokeRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Invoke-WorkspaceInstallerIteration.ps1 failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Measure and assert KPI signal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'installer-kpi-signal'
+          $summaryPath = Join-Path $outputRoot 'iteration-summary.json'
+          if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) {
+            throw "Missing iteration summary: $summaryPath"
+          }
+          $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $runOutputRoot = [string]$summary.latest.output_root
+          $exerciseReportPath = Join-Path $runOutputRoot 'exercise-report.json'
+          if (-not (Test-Path -LiteralPath $exerciseReportPath -PathType Leaf)) {
+            throw "Missing exercise report: $exerciseReportPath"
+          }
+          $exerciseReport = Get-Content -LiteralPath $exerciseReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $smokeReportPath = [string]$exerciseReport.smoke_installer.report_path
+          if ([string]::IsNullOrWhiteSpace($smokeReportPath)) {
+            $smokeReportPath = Join-Path (Join-Path $env:RUNNER_TEMP 'dev-smoke-kpi-signal') 'artifacts\workspace-install-latest.json'
+          }
+          if (-not (Test-Path -LiteralPath $smokeReportPath -PathType Leaf)) {
+            throw "Missing smoke installer report: $smokeReportPath"
+          }
+
+          $diagnosticsPath = Join-Path $outputRoot 'workspace-installer-diagnostics-latest.json'
+          $kpiPath = Join-Path $outputRoot 'workspace-installer-kpi-latest.json'
+          $assertionPath = Join-Path $outputRoot 'workspace-installer-kpi-assertion-latest.json'
+          $summaryMdPath = Join-Path $outputRoot 'workspace-installer-kpi-summary.md'
+          $summaryJsonPath = Join-Path $outputRoot 'workspace-installer-kpi-summary.json'
+
+          & pwsh -NoProfile -File ./scripts/Collect-WorkspaceInstallerDiagnostics.ps1 `
+            -ReportPath $smokeReportPath `
+            -KpiConfigPath ./diagnostics-kpi.json `
+            -OutputPath $diagnosticsPath
+          if ($LASTEXITCODE -ne 0) { throw "Collect-WorkspaceInstallerDiagnostics.ps1 failed with exit code $LASTEXITCODE." }
+
+          & pwsh -NoProfile -File ./scripts/Measure-WorkspaceInstallerKpis.ps1 `
+            -DiagnosticsPath $diagnosticsPath `
+            -KpiConfigPath ./diagnostics-kpi.json `
+            -ScopeProfile Harness `
+            -OutputPath $kpiPath
+          if ($LASTEXITCODE -ne 0) { throw "Measure-WorkspaceInstallerKpis.ps1 failed with exit code $LASTEXITCODE." }
+
+          & pwsh -NoProfile -File ./scripts/Assert-WorkspaceInstallerKpis.ps1 `
+            -KpiReportPath $kpiPath `
+            -KpiConfigPath ./diagnostics-kpi.json `
+            -OutputPath $assertionPath
+          if ($LASTEXITCODE -ne 0) { throw "Assert-WorkspaceInstallerKpis.ps1 failed with exit code $LASTEXITCODE." }
+
+          & pwsh -NoProfile -File ./scripts/Publish-WorkspaceInstallerKpiSummary.ps1 `
+            -KpiReportPath $kpiPath `
+            -AssertionReportPath $assertionPath `
+            -OutputMarkdownPath $summaryMdPath `
+            -OutputJsonPath $summaryJsonPath `
+            -Apply
+          if ($LASTEXITCODE -ne 0) { throw "Publish-WorkspaceInstallerKpiSummary.ps1 failed with exit code $LASTEXITCODE." }
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_BOT_TOKEN != '' && secrets.WORKFLOW_BOT_TOKEN || github.token }}
+
+      - name: Upload KPI signal artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-installer-kpi-signal-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/installer-kpi-signal/iteration-summary.json
+            ${{ runner.temp }}/installer-kpi-signal/workspace-installer-diagnostics-latest.json
+            ${{ runner.temp }}/installer-kpi-signal/workspace-installer-kpi-latest.json
+            ${{ runner.temp }}/installer-kpi-signal/workspace-installer-kpi-assertion-latest.json
+            ${{ runner.temp }}/installer-kpi-signal/workspace-installer-kpi-summary.md
+            ${{ runner.temp }}/installer-kpi-signal/workspace-installer-kpi-summary.json
+            ${{ runner.temp }}/installer-kpi-signal/run-001/exercise-report.json
+          if-no-files-found: warn

@@ -69,6 +69,23 @@ Describe 'Workspace installer developer experience diagnostics contract' {
         $script:installContent | Should -Match 'Unhandled installer exception:'
     }
 
+    It 'emits diagnostics and feedback schema sections for one-pass triage' {
+        $script:installContent | Should -Match 'diagnostics = \[ordered\]@\{'
+        $script:installContent | Should -Match 'schema_version = ''1\.0'''
+        $script:installContent | Should -Match 'phase_metrics = \$phaseMetrics'
+        $script:installContent | Should -Match 'command_diagnostics = \$commandDiagnostics'
+        $script:installContent | Should -Match 'failure_fingerprint = \$failureFingerprint'
+        $script:installContent | Should -Match 'developer_feedback = \$developerFeedback'
+    }
+
+    It 'captures command timeout diagnostics for runner-cli and governance phases' {
+        $script:installContent | Should -Match 'Invoke-ExecutableWithTimeout'
+        $script:installContent | Should -Match 'Invoke-PowerShellFileWithTimeout'
+        $script:installContent | Should -Match 'command_timeout_seconds'
+        $script:installContent | Should -Match 'timed_out'
+        $script:installContent | Should -Match 'timeout_process_tree'
+    }
+
     It 'has parse-safe PowerShell syntax in diagnostics scripts' {
         foreach ($content in @($script:exerciseContent, $script:installContent, $script:iterationContent)) {
             $tokens = $null

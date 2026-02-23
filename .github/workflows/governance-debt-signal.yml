@@ -1,0 +1,123 @@
+name: Governance Debt Signal
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: governance-debt-signal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  governance-debt-signal:
+    name: Governance Debt Signal
+    runs-on: [self-hosted, windows, self-hosted-windows-lv]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run workspace audit and drift signal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'governance-debt-signal'
+          New-Item -Path $outputRoot -ItemType Directory -Force | Out-Null
+
+          $workspacePreflightScript = 'C:\dev\scripts\Invoke-WorkspacePreflight.ps1'
+          $workspacePreflightReport = Join-Path $outputRoot 'workspace-preflight-audit.json'
+          if (Test-Path -LiteralPath $workspacePreflightScript -PathType Leaf) {
+            & pwsh -NoProfile -File $workspacePreflightScript `
+              -Profile WorkspaceAudit `
+              -WorkspaceRoot C:\dev `
+              -ManifestPath C:\dev\workspace-governance.json `
+              -OutputPath $workspacePreflightReport
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Workspace audit returned nonzero exit code ($LASTEXITCODE); debt visibility will still be published."
+            }
+          }
+
+          $driftReport = Join-Path $outputRoot 'workspace-drift-report.json'
+          & pwsh -NoProfile -File ./scripts/Test-WorkspaceManifestBranchDrift.ps1 `
+            -ManifestPath ./workspace-governance.json `
+            -OutputPath $driftReport
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Workspace drift signal returned nonzero exit code ($LASTEXITCODE)."
+          }
+
+      - name: Upsert governance debt issue
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_BOT_TOKEN != '' && secrets.WORKFLOW_BOT_TOKEN || github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'governance-debt-signal'
+          $driftReport = Join-Path $outputRoot 'workspace-drift-report.json'
+          $preflightReport = Join-Path $outputRoot 'workspace-preflight-audit.json'
+
+          if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+            throw "gh CLI was not found on PATH."
+          }
+          if ([string]::IsNullOrWhiteSpace([string]$env:GH_TOKEN)) {
+            throw "GH_TOKEN is required for issue publishing."
+          }
+
+          $title = 'Workspace Governance Debt'
+          $repo = '${{ github.repository }}'
+          $search = ('"{0}" in:title state:open' -f $title)
+          $existingNumber = gh issue list -R $repo --search $search --json number --jq '.[0].number'
+
+          $driftSummary = if (Test-Path -LiteralPath $driftReport -PathType Leaf) {
+            try {
+              $drift = Get-Content -LiteralPath $driftReport -Raw | ConvertFrom-Json -ErrorAction Stop
+              "drift_status=$($drift.status); drift_count=$($drift.summary.drift_count)"
+            } catch {
+              "drift_report_parse_failed=$($_.Exception.Message)"
+            }
+          } else {
+            'drift_report_missing=true'
+          }
+
+          $preflightSummary = if (Test-Path -LiteralPath $preflightReport -PathType Leaf) {
+            try {
+              $preflight = Get-Content -LiteralPath $preflightReport -Raw | ConvertFrom-Json -ErrorAction Stop
+              "blocking_failures=$($preflight.summary.blocking_failures); advisory_failures=$($preflight.summary.advisory_failures)"
+            } catch {
+              "preflight_report_parse_failed=$($_.Exception.Message)"
+            }
+          } else {
+            'preflight_report_missing=true'
+          }
+
+          $runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          $body = @"
+          # Workspace Governance Debt
+
+          - Run: $runUrl
+          - Drift: $driftSummary
+          - WorkspaceAudit: $preflightSummary
+
+          Artifacts:
+          - workspace-drift-report.json
+          - workspace-preflight-audit.json
+          "@
+
+          if ([string]::IsNullOrWhiteSpace([string]$existingNumber)) {
+            gh issue create -R $repo --title $title --body $body --label governance --label automation --label ops-required | Out-Null
+          } else {
+            gh issue comment -R $repo $existingNumber --body $body | Out-Null
+          }
+
+      - name: Upload governance debt artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-debt-signal-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/governance-debt-signal/workspace-drift-report.json
+            ${{ runner.temp }}/governance-debt-signal/workspace-preflight-audit.json
+          if-no-files-found: warn

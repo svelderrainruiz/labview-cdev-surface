@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/svelderrainruiz/labview-cdev-surface/schemas/workspace-installer-diagnostics.schema.json",
+  "title": "Workspace Installer Diagnostics",
+  "description": "Diagnostics contract emitted by scripts/Install-WorkspaceFromManifest.ps1 in workspace-install-latest.json.",
+  "type": "object",
+  "required": [
+    "diagnostics"
+  ],
+  "properties": {
+    "diagnostics": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "platform",
+        "execution_context",
+        "phase_metrics",
+        "command_diagnostics",
+        "artifact_index",
+        "failure_fingerprint",
+        "developer_feedback"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "platform": {
+          "type": "object"
+        },
+        "execution_context": {
+          "type": "object"
+        },
+        "phase_metrics": {
+          "type": "object"
+        },
+        "command_diagnostics": {
+          "type": "object"
+        },
+        "artifact_index": {
+          "type": "array"
+        },
+        "failure_fingerprint": {
+          "type": "object"
+        },
+        "developer_feedback": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

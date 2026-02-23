@@ -21,6 +21,12 @@ Describe 'Workspace surface contract' {
         $script:writeProvenanceScriptPath = Join-Path $script:repoRoot 'scripts/Write-ReleaseProvenance.ps1'
         $script:testProvenanceScriptPath = Join-Path $script:repoRoot 'scripts/Test-ProvenanceContracts.ps1'
         $script:dockerLinuxIterationScriptPath = Join-Path $script:repoRoot 'scripts/Invoke-DockerDesktopLinuxIteration.ps1'
+        $script:collectDiagnosticsScriptPath = Join-Path $script:repoRoot 'scripts/Collect-WorkspaceInstallerDiagnostics.ps1'
+        $script:measureKpisScriptPath = Join-Path $script:repoRoot 'scripts/Measure-WorkspaceInstallerKpis.ps1'
+        $script:assertKpisScriptPath = Join-Path $script:repoRoot 'scripts/Assert-WorkspaceInstallerKpis.ps1'
+        $script:publishKpiSummaryScriptPath = Join-Path $script:repoRoot 'scripts/Publish-WorkspaceInstallerKpiSummary.ps1'
+        $script:diagnosticsSchemaPath = Join-Path $script:repoRoot 'schemas/workspace-installer-diagnostics.schema.json'
+        $script:kpiConfigPath = Join-Path $script:repoRoot 'diagnostics-kpi.json'
         $script:nsisInstallerPath = Join-Path $script:repoRoot 'nsis/workspace-bootstrap-installer.nsi'
         $script:ciWorkflowPath = Join-Path $script:repoRoot '.github/workflows/ci.yml'
         $script:driftWorkflowPath = Join-Path $script:repoRoot '.github/workflows/workspace-sha-drift-signal.yml'
@@ -29,11 +35,14 @@ Describe 'Workspace surface contract' {
         $script:canaryWorkflowPath = Join-Path $script:repoRoot '.github/workflows/nightly-supplychain-canary.yml'
         $script:windowsImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/windows-labview-image-gate.yml'
         $script:linuxImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/linux-labview-image-gate.yml'
+        $script:kpiSignalWorkflowPath = Join-Path $script:repoRoot '.github/workflows/workspace-installer-kpi-signal.yml'
+        $script:governanceDebtWorkflowPath = Join-Path $script:repoRoot '.github/workflows/governance-debt-signal.yml'
         $script:globalJsonPath = Join-Path $script:repoRoot 'global.json'
         $script:payloadAgentsPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/AGENTS.md'
         $script:payloadManifestPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/workspace-governance.json'
         $script:payloadAssertScriptPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/scripts/Assert-WorkspaceGovernance.ps1'
         $script:payloadPolicyScriptPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/scripts/Test-PolicyContracts.ps1'
+        $script:payloadKpiConfigPath = Join-Path $script:repoRoot 'workspace-governance-payload/workspace-governance/diagnostics-kpi.json'
 
         $requiredPaths = @(
             $script:manifestPath,
@@ -51,6 +60,12 @@ Describe 'Workspace surface contract' {
             $script:writeProvenanceScriptPath,
             $script:testProvenanceScriptPath,
             $script:dockerLinuxIterationScriptPath,
+            $script:collectDiagnosticsScriptPath,
+            $script:measureKpisScriptPath,
+            $script:assertKpisScriptPath,
+            $script:publishKpiSummaryScriptPath,
+            $script:diagnosticsSchemaPath,
+            $script:kpiConfigPath,
             $script:nsisInstallerPath,
             $script:ciWorkflowPath,
             $script:driftWorkflowPath,
@@ -59,11 +74,14 @@ Describe 'Workspace surface contract' {
             $script:canaryWorkflowPath,
             $script:windowsImageGateWorkflowPath,
             $script:linuxImageGateWorkflowPath,
+            $script:kpiSignalWorkflowPath,
+            $script:governanceDebtWorkflowPath,
             $script:globalJsonPath,
             $script:payloadAgentsPath,
             $script:payloadManifestPath,
             $script:payloadAssertScriptPath,
-            $script:payloadPolicyScriptPath
+            $script:payloadPolicyScriptPath,
+            $script:payloadKpiConfigPath
         )
 
         foreach ($path in $requiredPaths) {
@@ -78,6 +96,7 @@ Describe 'Workspace surface contract' {
         $script:readmeContent = Get-Content -LiteralPath $script:readmePath -Raw
         $script:ciWorkflowContent = Get-Content -LiteralPath $script:ciWorkflowPath -Raw
         $script:releaseWorkflowContent = Get-Content -LiteralPath $script:releaseWorkflowPath -Raw
+        $script:kpiWorkflowContent = Get-Content -LiteralPath $script:kpiSignalWorkflowPath -Raw
     }
 
     It 'tracks a deterministic managed repo set with pinned SHA lock' {
@@ -115,6 +134,12 @@ Describe 'Workspace surface contract' {
         ($script:payloadManifest | ConvertTo-Json -Depth 50) | Should -Be ($script:manifest | ConvertTo-Json -Depth 50)
     }
 
+    It 'keeps diagnostics KPI config aligned with payload copy' {
+        $kpiConfig = Get-Content -LiteralPath $script:kpiConfigPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $payloadKpiConfig = Get-Content -LiteralPath $script:payloadKpiConfigPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        ($payloadKpiConfig | ConvertTo-Json -Depth 30) | Should -Be ($kpiConfig | ConvertTo-Json -Depth 30)
+    }
+
     It 'documents drift failure as the PR release signal' {
         $script:agentsContent | Should -Match 'Workspace SHA Refresh PR'
         $script:agentsContent | Should -Match 'auto-merge'
@@ -140,6 +165,10 @@ Describe 'Workspace surface contract' {
         $script:ciWorkflowContent | Should -Match 'WorkspaceInstallerDeveloperExperienceContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'WorkspaceShaRefreshPrContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'WorkspaceManifestPinRefreshScript\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'WorkspaceInstallerDiagnosticsSchema\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'WorkspaceInstallerKpiContract\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'WorkspaceInstallerHangRecoveryContract\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'WorkspaceInstallerKpiWorkflowContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'ENABLE_SELF_HOSTED_CONTRACTS'
     }
 
@@ -151,5 +180,15 @@ Describe 'Workspace surface contract' {
         $script:releaseWorkflowContent | Should -Match 'gh release upload'
         $script:releaseWorkflowContent | Should -Match 'workspace-installer\.spdx\.json'
         $script:releaseWorkflowContent | Should -Match 'workspace-installer\.slsa\.json'
+    }
+
+    It 'defines workspace installer KPI signal workflow contract' {
+        $script:kpiWorkflowContent | Should -Match 'name:\s*Workspace Installer KPI Signal'
+        $script:kpiWorkflowContent | Should -Match 'workflow_dispatch:'
+        $script:kpiWorkflowContent | Should -Match 'schedule:'
+        $script:kpiWorkflowContent | Should -Match 'Collect-WorkspaceInstallerDiagnostics\.ps1'
+        $script:kpiWorkflowContent | Should -Match 'Measure-WorkspaceInstallerKpis\.ps1'
+        $script:kpiWorkflowContent | Should -Match 'Assert-WorkspaceInstallerKpis\.ps1'
+        $script:kpiWorkflowContent | Should -Match 'Publish-WorkspaceInstallerKpiSummary\.ps1'
     }
 }
