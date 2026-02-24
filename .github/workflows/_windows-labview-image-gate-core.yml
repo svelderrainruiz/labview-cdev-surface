@@ -301,7 +301,24 @@ jobs:
           }
           $labviewX86NipkgInstallCmd = '${{ vars.LABVIEW_X86_NIPKG_INSTALL_CMD }}'
           if ([string]::IsNullOrWhiteSpace($labviewX86NipkgInstallCmd)) {
-            $labviewX86NipkgInstallCmd = ''
+            $nipkgExe = '"C:\Program Files\National Instruments\NI Package Manager\nipkg.exe"'
+            if ($gateRequiredLabviewYear -eq '2026') {
+              $labviewX86NipkgInstallCmd = @(
+                "$nipkgExe feed-add ni-labview-2026-core-x86-en-2026-q1-released https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26.1/released",
+                "$nipkgExe feed-add ni-labview-2026-core-x86-en-2026-q1-released-critical https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26.1/released-critical",
+                "$nipkgExe update",
+                "$nipkgExe install --accept-eulas --yes --include-recommended ni-labview-2026-core-x86-en"
+              ) -join ' && '
+            } elseif ($gateRequiredLabviewYear -eq '2020') {
+              $labviewX86NipkgInstallCmd = @(
+                "$nipkgExe feed-add ni-labview-2020-core-x86-en-2020-released https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20.0/released",
+                "$nipkgExe feed-add ni-labview-2020-core-x86-en-2020-released-critical https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20.0/released-critical",
+                "$nipkgExe update",
+                "$nipkgExe install --accept-eulas --yes --include-recommended ni-labview-2020-core-x86-en"
+              ) -join ' && '
+            } else {
+              $labviewX86NipkgInstallCmd = ''
+            }
           }
 
           $hostPwshRoot = 'C:\Program Files\PowerShell\7'
