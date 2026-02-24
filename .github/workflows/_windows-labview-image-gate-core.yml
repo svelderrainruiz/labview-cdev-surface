@@ -162,13 +162,14 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $env:Path = @(
+            'C:\host-tools\PowerShell7',
             'C:\host-tools\Git\cmd',
             'C:\host-tools\GitHubCLI',
             'C:\host-tools\G-CLI\bin',
             $env:Path
           ) -join ';'
 
-          $requiredCommands = @('powershell', 'git', 'gh', 'g-cli')
+          $requiredCommands = @('powershell', 'pwsh', 'git', 'gh', 'g-cli')
           $missingCommands = @()
           foreach ($name in $requiredCommands) {
             if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -229,10 +230,11 @@ jobs:
             $dockerIsolation = 'process'
           }
 
+          $hostPwshRoot = 'C:\Program Files\PowerShell\7'
           $hostGitRoot = 'C:\Program Files\Git'
           $hostGhRoot = 'C:\Program Files\GitHub CLI'
           $hostGCliRoot = 'C:\Program Files\G-CLI'
-          foreach ($hostToolRoot in @($hostGitRoot, $hostGhRoot, $hostGCliRoot)) {
+          foreach ($hostToolRoot in @($hostPwshRoot, $hostGitRoot, $hostGhRoot, $hostGCliRoot)) {
             if (-not (Test-Path -LiteralPath $hostToolRoot -PathType Container)) {
               throw "Required host tool root is missing for container bind mount: $hostToolRoot"
             }
@@ -241,6 +243,7 @@ jobs:
           docker run --rm `
             --isolation=$dockerIsolation `
             --mount "type=bind,source=${env:GITHUB_WORKSPACE},target=C:\workspace" `
+            --mount "type=bind,source=$hostPwshRoot,target=C:\host-tools\PowerShell7,readonly" `
             --mount "type=bind,source=$hostGitRoot,target=C:\host-tools\Git,readonly" `
             --mount "type=bind,source=$hostGhRoot,target=C:\host-tools\GitHubCLI,readonly" `
             --mount "type=bind,source=$hostGCliRoot,target=C:\host-tools\G-CLI,readonly" `
