@@ -73,12 +73,16 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Match 'run-vi-analyzer-windows\.ps1'
         $script:coreWorkflowContent | Should -Match 'vi-analyzer-summary\.parity\.windows\.gate\.json'
         $script:coreWorkflowContent | Should -Match 'PARITY_BUILD_SPEC_MARKER'
+        $script:coreWorkflowContent | Should -Match 'git config --global --add safe\.directory'
+        $script:coreWorkflowContent | Should -Match 'Failed to configure git safe\.directory entry'
     }
 
     It 'keeps valid feed-add command ordering and container fallback diagnostics contract' {
         $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26\.1/released --name=ni-labview-2026-core-x86-en-2026-q1-released'
         $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20\.0/released --name=ni-labview-2020-core-x86-en-2020-released'
         $script:coreWorkflowContent | Should -Not -Match 'feed-add\s+ni-labview-[^\s]+\s+https://'
+        $script:coreWorkflowContent | Should -Match 'source=""\$hostLabview2020x64Root"",target=""C:\\Program Files\\National Instruments\\LabVIEW 2020"",readonly'
+        $script:coreWorkflowContent | Should -Match 'source=""\$hostLabview2020x86Root"",target=""C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020"",readonly'
         $script:coreWorkflowContent | Should -Match 'container_boot_failure'
         $script:coreWorkflowContent | Should -Match 'container-fallback-diagnostics\.json'
         $script:coreWorkflowContent | Should -Match 'docker manifest inspect --verbose'

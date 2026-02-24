@@ -233,6 +233,7 @@ jobs:
           $workspaceArtifactsRoot = Join-Path $workspaceRoot 'artifacts'
           $installReportPath = Join-Path $workspaceArtifactsRoot 'workspace-install-latest.json'
           $launchLogPath = Join-Path $workspaceArtifactsRoot 'workspace-installer-launch.log'
+          $manifestPath = Join-Path $artifactRoot 'payload\workspace-governance\workspace-governance.json'
 
           foreach ($requiredRoot in @(
             'C:\Program Files\National Instruments\LabVIEW 2020',
@@ -243,6 +244,23 @@ jobs:
           )) {
             if (-not (Test-Path -LiteralPath $requiredRoot -PathType Container)) {
               throw "Host release gate requires root path: $requiredRoot"
+            }
+          }
+          if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "Workspace governance manifest is missing for host release gate: $manifestPath"
+          }
+
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $safeRepoPaths = @(
+            @($manifest.managed_repos |
+              ForEach-Object { [string]$_.path } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Select-Object -Unique)
+          )
+          foreach ($safeRepoPath in $safeRepoPaths) {
+            & git config --global --add safe.directory $safeRepoPath 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to configure git safe.directory entry for host release gate path: $safeRepoPath"
             }
           }
 
@@ -524,6 +542,24 @@ jobs:
             throw "Container runtime missing required commands after host-tool mount: $($missingCommands -join ', ')"
           }
 
+          $manifestPath = "C:\workspace\artifacts\windows-image-gate\parity\payload\workspace-governance\workspace-governance.json"
+          if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "Workspace governance manifest is missing for container parity gate: $manifestPath"
+          }
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $safeRepoPaths = @(
+            @($manifest.managed_repos |
+              ForEach-Object { [string]$_.path } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Select-Object -Unique)
+          )
+          foreach ($safeRepoPath in $safeRepoPaths) {
+            & git config --global --add safe.directory $safeRepoPath 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to configure git safe.directory entry for container parity gate path: $safeRepoPath"
+            }
+          }
+
           $installerProcess = Start-Process -FilePath "C:\workspace\artifacts\windows-image-gate\parity\lvie-cdev-workspace-installer.exe" -ArgumentList '/S' -Wait -PassThru
 
           $workspaceRoot = 'C:\workspace\gate-dev-parity'
@@ -674,14 +710,21 @@ jobs:
             '--env', "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=$labviewX86NipkgInstallCmd",
             '--env', "LVIE_PARITY_LVCONTAINER_RAW=$env:LVIE_PARITY_LVCONTAINER_RAW",
             '--env', "LVIE_PARITY_WINDOWS_TAG=$env:LVIE_PARITY_WINDOWS_TAG",
-            '--env', "PARITY_BUILD_SPEC_MARKER=$env:PARITY_BUILD_SPEC_MARKER",
-            '--mount', "type=bind,source=${env:GITHUB_WORKSPACE},target=C:\workspace",
-            '--mount', "type=bind,source=$hostDevRoot,target=C:\dev",
-            '--mount', "type=bind,source=$hostLabview2020x64Root,target=C:\Program Files\National Instruments\LabVIEW 2020,readonly",
-            '--mount', "type=bind,source=$hostLabview2020x86Root,target=C:\Program Files (x86)\National Instruments\LabVIEW 2020,readonly",
-            '--mount', "type=bind,source=$hostGitRoot,target=C:\host-tools\Git,readonly",
-            '--mount', "type=bind,source=$hostGhRoot,target=C:\host-tools\GitHubCLI,readonly",
-            '--mount', "type=bind,source=$hostGCliRoot,target=C:\host-tools\G-CLI,readonly",
+            '--env', "PARITY_BUILD_SPEC_MARKER=$env:PARITY_BUILD_SPEC_MARKER"
+          )
+          $dockerMountSpecs = @(
+            "type=bind,source=""$($env:GITHUB_WORKSPACE)"",target=""C:\workspace""",
+            "type=bind,source=""$hostDevRoot"",target=""C:\dev""",
+            "type=bind,source=""$hostLabview2020x64Root"",target=""C:\Program Files\National Instruments\LabVIEW 2020"",readonly",
+            "type=bind,source=""$hostLabview2020x86Root"",target=""C:\Program Files (x86)\National Instruments\LabVIEW 2020"",readonly",
+            "type=bind,source=""$hostGitRoot"",target=""C:\host-tools\Git"",readonly",
+            "type=bind,source=""$hostGhRoot"",target=""C:\host-tools\GitHubCLI"",readonly",
+            "type=bind,source=""$hostGCliRoot"",target=""C:\host-tools\G-CLI"",readonly"
+          )
+          foreach ($dockerMountSpec in $dockerMountSpecs) {
+            $dockerArgs += @('--mount', $dockerMountSpec)
+          }
+          $dockerArgs += @(
             $labviewImage,
             'powershell', '-NoProfile', '-Command', $containerCmd
           )
@@ -736,7 +779,12 @@ jobs:
               throw "Windows container parity gate failed with exit code $dockerExitCode."
             }
           } finally {
-            & docker rm -f $containerName *> $null
+            try {
+              & docker rm -f $containerName *> $null
+              $null = $LASTEXITCODE
+            } catch {
+              Write-Warning "Failed to remove container '$containerName'. $($_.Exception.Message)"
+            }
           }
 
       - name: Upload container parity gate artifacts
