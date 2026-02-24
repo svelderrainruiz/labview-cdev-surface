@@ -112,6 +112,17 @@ if ($installerContractMembers -contains 'canary') {
 }
 if ($installerContractMembers -contains 'container_parity_contract') {
     $containerParity = $manifest.installer_contract.container_parity_contract
+    Add-Check -Scope 'manifest' -Name 'container_parity_lvcontainer_source_repo' -Passed ([string]$containerParity.lvcontainer_source_repo -eq 'labview-icon-editor') -Detail ([string]$containerParity.lvcontainer_source_repo)
+    Add-Check -Scope 'manifest' -Name 'container_parity_lvcontainer_file' -Passed ([string]$containerParity.lvcontainer_file -eq '.lvcontainer') -Detail ([string]$containerParity.lvcontainer_file)
+    Add-Check -Scope 'manifest' -Name 'container_parity_windows_tag_strategy' -Passed ([string]$containerParity.windows_tag_strategy -eq 'derive-from-lvcontainer') -Detail ([string]$containerParity.windows_tag_strategy)
+    Add-Check -Scope 'manifest' -Name 'container_parity_allowed_windows_tags_has_2025q3' -Passed (@($containerParity.allowed_windows_tags) -contains '2025q3-windows') -Detail ([string]::Join(',', @($containerParity.allowed_windows_tags)))
+    Add-Check -Scope 'manifest' -Name 'container_parity_allowed_windows_tags_has_2026q1' -Passed (@($containerParity.allowed_windows_tags) -contains '2026q1-windows') -Detail ([string]::Join(',', @($containerParity.allowed_windows_tags)))
+    Add-Check -Scope 'manifest' -Name 'container_parity_allowed_windows_tags_no_2025q4' -Passed (-not (@($containerParity.allowed_windows_tags) -contains '2025q4-windows')) -Detail ([string]::Join(',', @($containerParity.allowed_windows_tags)))
+    Add-Check -Scope 'manifest' -Name 'container_parity_required_execution_profile' -Passed ([string]$containerParity.required_execution_profile -eq 'container-parity') -Detail ([string]$containerParity.required_execution_profile)
+    Add-Check -Scope 'manifest' -Name 'container_parity_artifact_root' -Passed ([string]$containerParity.artifact_root -eq 'artifacts\parity') -Detail ([string]$containerParity.artifact_root)
+    Add-Check -Scope 'manifest' -Name 'container_parity_build_spec_kind' -Passed ([string]$containerParity.build_spec_kind -eq 'ppl') -Detail ([string]$containerParity.build_spec_kind)
+    Add-Check -Scope 'manifest' -Name 'container_parity_build_spec_placeholder' -Passed ([string]$containerParity.build_spec_placeholder -eq 'srcdist') -Detail ([string]$containerParity.build_spec_placeholder)
+    Add-Check -Scope 'manifest' -Name 'container_parity_promote_artifacts_false' -Passed (-not [bool]$containerParity.promote_artifacts) -Detail ([string]$containerParity.promote_artifacts)
     Add-Check -Scope 'manifest' -Name 'container_parity_linux_tag_strategy' -Passed ([string]$containerParity.linux_tag_strategy -eq 'sibling-windows-to-linux') -Detail ([string]$containerParity.linux_tag_strategy)
     Add-Check -Scope 'manifest' -Name 'container_parity_allowed_linux_tags' -Passed (@($containerParity.allowed_linux_tags) -contains '2025q3-linux') -Detail ([string]::Join(',', @($containerParity.allowed_linux_tags)))
     Add-Check -Scope 'manifest' -Name 'container_parity_locked_linux_image' -Passed ([string]$containerParity.locked_linux_image -eq 'nationalinstruments/labview:2025q3-linux@sha256:9938561c6460841674f9b1871d8562242f51fe9fb72a2c39c66608491edf429c') -Detail ([string]$containerParity.locked_linux_image)
@@ -122,6 +133,7 @@ if ($installerContractMembers -contains 'container_parity_contract') {
     Add-Check -Scope 'manifest' -Name 'container_parity_linux_vip_bitness_32' -Passed (@($containerParity.linux_vip_build.required_ppl_bitness) -contains '32') -Detail ([string]::Join(',', @($containerParity.linux_vip_build.required_ppl_bitness)))
     Add-Check -Scope 'manifest' -Name 'container_parity_linux_vip_bitness_64' -Passed (@($containerParity.linux_vip_build.required_ppl_bitness) -contains '64') -Detail ([string]::Join(',', @($containerParity.linux_vip_build.required_ppl_bitness)))
     Add-Check -Scope 'manifest' -Name 'container_parity_linux_vip_artifact_role' -Passed ([string]$containerParity.linux_vip_build.artifact_role -eq 'signal-only') -Detail ([string]$containerParity.linux_vip_build.artifact_role)
+    Add-Check -Scope 'manifest' -Name 'container_parity_required_check_rollout_linux_required_false' -Passed (-not [bool]$containerParity.required_check_rollout.linux_parity_required) -Detail ([string]$containerParity.required_check_rollout.linux_parity_required)
     Add-Check -Scope 'manifest' -Name 'container_parity_required_check_rollout' -Passed ([string]$containerParity.required_check_rollout.promotion_condition -eq 'single_green_run') -Detail ([string]$containerParity.required_check_rollout.promotion_condition)
 }
 

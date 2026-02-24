@@ -22,11 +22,21 @@ Describe 'Linux LabVIEW image gate workflow contract' {
         $script:wrapperWorkflowContent | Should -Match 'workflow_dispatch:'
         $script:wrapperWorkflowContent | Should -Not -Match '(?m)^\s*push:'
         $script:wrapperWorkflowContent | Should -Not -Match '(?m)^\s*pull_request:'
+        $script:wrapperWorkflowContent | Should -Match 'windows-labview-image-gate-prereq:'
+        $script:wrapperWorkflowContent | Should -Match 'uses:\s*\./\.github/workflows/_windows-labview-image-gate-core\.yml'
+        $script:wrapperWorkflowContent | Should -Match 'needs:\s*\[windows-labview-image-gate-prereq\]'
         $script:wrapperWorkflowContent | Should -Match 'uses:\s*\./\.github/workflows/_linux-labview-image-gate-core\.yml'
+        $script:wrapperWorkflowContent | Should -Match 'windows_prereq_x86_artifact_name:'
+        $script:wrapperWorkflowContent | Should -Match 'windows_prereq_x64_artifact_name:'
+        $script:wrapperWorkflowContent | Should -Match 'windows_prereq_native_labview_version:'
     }
 
     It 'resolves linux image tags deterministically and enforces locked image pinning' {
         $script:coreWorkflowContent | Should -Match 'workflow_call:'
+        $script:coreWorkflowContent | Should -Match 'inputs:'
+        $script:coreWorkflowContent | Should -Match 'windows_prereq_x86_artifact_name:'
+        $script:coreWorkflowContent | Should -Match 'windows_prereq_x64_artifact_name:'
+        $script:coreWorkflowContent | Should -Match 'windows_prereq_native_labview_version:'
         $script:coreWorkflowContent | Should -Match 'installer_contract\.container_parity_contract'
         $script:coreWorkflowContent | Should -Match 'linux_tag_strategy'
         $script:coreWorkflowContent | Should -Match 'allowed_linux_tags'
@@ -41,15 +51,21 @@ Describe 'Linux LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Match 'linux-image-resolution\.json'
     }
 
-    It 'defines required linux parity jobs and VIP preflight contract' {
+    It 'defines required linux parity jobs and consumes real windows-host artifacts for VIP preflight' {
         $script:coreWorkflowContent | Should -Match 'linux-parity-ppl-64:'
-        $script:coreWorkflowContent | Should -Match 'windows-host-ppl-32:'
-        $script:coreWorkflowContent | Should -Match 'windows-host-ppl-64:'
         $script:coreWorkflowContent | Should -Match 'linux-parity-vip:'
+        $script:coreWorkflowContent | Should -Match 'resolve-prereq-artifacts'
+        $script:coreWorkflowContent | Should -Not -Match 'windows-host-ppl-32:'
+        $script:coreWorkflowContent | Should -Not -Match 'windows-host-ppl-64:'
+        $script:coreWorkflowContent | Should -Match 'windows-host-linux-prereq-x86-'
+        $script:coreWorkflowContent | Should -Match 'windows-host-linux-prereq-x64-'
+        $script:coreWorkflowContent | Should -Match 'windows-host-prereq-x86'
+        $script:coreWorkflowContent | Should -Match 'windows-host-prereq-x64'
         $script:coreWorkflowContent | Should -Match 'lv_icon_x86\.lvlibp'
         $script:coreWorkflowContent | Should -Match 'lv_icon_x64\.lvlibp'
         $script:coreWorkflowContent | Should -Match 'vipm_api_unavailable'
         $script:coreWorkflowContent | Should -Match "driver = 'vipm-api'"
+        $script:coreWorkflowContent | Should -Match 'windows_prereq_artifacts'
         $script:coreWorkflowContent | Should -Match 'artifact_role = ''signal-only'''
         $script:coreWorkflowContent | Should -Match 'artifacts/parity/linux/vip/\*'
         $script:coreWorkflowContent | Should -Match 'artifacts/release/\*'

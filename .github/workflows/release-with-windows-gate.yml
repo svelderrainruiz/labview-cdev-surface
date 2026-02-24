@@ -18,7 +18,7 @@ on:
         default: false
         type: boolean
       allow_gate_override:
-        description: Allow publish even if Windows gate fails (controlled break-glass).
+        description: Allow publish when a hard gate fails (controlled break-glass).
         required: false
         default: false
         type: boolean
@@ -65,6 +65,10 @@ jobs:
     name: Linux Parity Gate
     needs: [repo_guard, windows_gate]
     uses: ./.github/workflows/_linux-labview-image-gate-core.yml
+    with:
+      windows_prereq_x86_artifact_name: ${{ needs.windows_gate.outputs.linux_prereq_x86_artifact_name }}
+      windows_prereq_x64_artifact_name: ${{ needs.windows_gate.outputs.linux_prereq_x64_artifact_name }}
+      windows_prereq_native_labview_version: ${{ needs.windows_gate.outputs.linux_prereq_native_labview_version }}
     secrets: inherit
 
   gate_policy:

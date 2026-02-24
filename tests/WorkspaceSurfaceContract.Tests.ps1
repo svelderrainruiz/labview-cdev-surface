@@ -134,7 +134,9 @@ Describe 'Workspace surface contract' {
         $script:manifest.installer_contract.container_parity_contract.build_spec_kind | Should -Be 'ppl'
         $script:manifest.installer_contract.container_parity_contract.build_spec_placeholder | Should -Be 'srcdist'
         $script:manifest.installer_contract.container_parity_contract.promote_artifacts | Should -BeFalse
+        (@($script:manifest.installer_contract.container_parity_contract.allowed_windows_tags) -contains '2025q3-windows') | Should -BeTrue
         (@($script:manifest.installer_contract.container_parity_contract.allowed_windows_tags) -contains '2026q1-windows') | Should -BeTrue
+        (@($script:manifest.installer_contract.container_parity_contract.allowed_windows_tags) -contains '2025q4-windows') | Should -BeFalse
         $script:manifest.installer_contract.ppl_capability_proof.command | Should -Be 'runner-cli ppl build'
         ((@($script:manifest.installer_contract.ppl_capability_proof.supported_bitnesses) | ForEach-Object { [string]$_ }) -join ',') | Should -Be '32,64'
         $script:manifest.installer_contract.vip_capability_proof.command | Should -Be 'runner-cli vip build'

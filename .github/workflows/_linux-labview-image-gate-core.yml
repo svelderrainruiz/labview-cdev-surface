@@ -2,6 +2,22 @@ name: _linux-labview-image-gate-core
 
 on:
   workflow_call:
+    inputs:
+      windows_prereq_x86_artifact_name:
+        description: Windows-host native x86 parity prerequisite artifact name from the same workflow run.
+        required: false
+        type: string
+        default: ''
+      windows_prereq_x64_artifact_name:
+        description: Windows-host native x64 parity prerequisite artifact name from the same workflow run.
+        required: false
+        type: string
+        default: ''
+      windows_prereq_native_labview_version:
+        description: Native host LabVIEW version used to produce Windows parity prerequisites.
+        required: false
+        type: string
+        default: ''
     outputs:
       gate_status:
         description: Pass/fail status for the Linux image gate.
@@ -272,93 +288,11 @@ jobs:
           path: ${{ github.workspace }}/artifacts/parity/linux/ppl-64
           if-no-files-found: error
 
-  windows-host-ppl-32:
-    name: windows-host-ppl-32
-    needs: [resolve-linux-context]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Stage Windows host PPL prerequisite artifact (32-bit)
-        shell: pwsh
-        env:
-          WINDOWS_HOST_EXECUTION_MODE: ${{ needs.resolve-linux-context.outputs.windows_host_execution_mode }}
-          WINDOWS_HOST_NATIVE_LABVIEW_VERSION: ${{ needs.resolve-linux-context.outputs.windows_host_native_labview_version }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Write-Host "::notice::[heartbeat] windows-host-ppl-32: start"
-
-          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts/parity/windows/ppl-32'
-          New-Item -Path $artifactRoot -ItemType Directory -Force | Out-Null
-
-          Set-Content -LiteralPath (Join-Path $artifactRoot 'lv_icon_x86.lvlibp') -Value 'signal-only windows host ppl x86' -Encoding ascii
-          Set-Content -LiteralPath (Join-Path $artifactRoot 'IconEditor.vipb') -Value '<vipb signal-only="true" />' -Encoding ascii
-          Set-Content -LiteralPath (Join-Path $artifactRoot 'release-notes.md') -Value 'Linux parity signal-only VIP artifact.' -Encoding utf8
-
-          [ordered]@{
-            status = 'pass'
-            lane = 'windows-host-ppl-32'
-            bitness = '32'
-            windows_host_execution_mode = [string]$env:WINDOWS_HOST_EXECUTION_MODE
-            windows_host_native_labview_version = [string]$env:WINDOWS_HOST_NATIVE_LABVIEW_VERSION
-            produced_files = @('lv_icon_x86.lvlibp', 'IconEditor.vipb', 'release-notes.md')
-            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $artifactRoot 'windows-host-ppl-32-report.json') -Encoding utf8
-
-          Write-Host "::notice::[heartbeat] windows-host-ppl-32: completed"
-
-      - name: Upload windows host ppl-32 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-host-ppl-32-${{ github.run_id }}
-          path: ${{ github.workspace }}/artifacts/parity/windows/ppl-32
-          if-no-files-found: error
-
-  windows-host-ppl-64:
-    name: windows-host-ppl-64
-    needs: [resolve-linux-context]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Stage Windows host PPL prerequisite artifact (64-bit)
-        shell: pwsh
-        env:
-          WINDOWS_HOST_EXECUTION_MODE: ${{ needs.resolve-linux-context.outputs.windows_host_execution_mode }}
-          WINDOWS_HOST_NATIVE_LABVIEW_VERSION: ${{ needs.resolve-linux-context.outputs.windows_host_native_labview_version }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Write-Host "::notice::[heartbeat] windows-host-ppl-64: start"
-
-          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts/parity/windows/ppl-64'
-          New-Item -Path $artifactRoot -ItemType Directory -Force | Out-Null
-
-          Set-Content -LiteralPath (Join-Path $artifactRoot 'lv_icon_x64.lvlibp') -Value 'signal-only windows host ppl x64' -Encoding ascii
-          Set-Content -LiteralPath (Join-Path $artifactRoot 'IconEditor.vipb') -Value '<vipb signal-only="true" />' -Encoding ascii
-          Set-Content -LiteralPath (Join-Path $artifactRoot 'release-notes.md') -Value 'Linux parity signal-only VIP artifact.' -Encoding utf8
-
-          [ordered]@{
-            status = 'pass'
-            lane = 'windows-host-ppl-64'
-            bitness = '64'
-            windows_host_execution_mode = [string]$env:WINDOWS_HOST_EXECUTION_MODE
-            windows_host_native_labview_version = [string]$env:WINDOWS_HOST_NATIVE_LABVIEW_VERSION
-            produced_files = @('lv_icon_x64.lvlibp', 'IconEditor.vipb', 'release-notes.md')
-            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $artifactRoot 'windows-host-ppl-64-report.json') -Encoding utf8
-
-          Write-Host "::notice::[heartbeat] windows-host-ppl-64: completed"
-
-      - name: Upload windows host ppl-64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-host-ppl-64-${{ github.run_id }}
-          path: ${{ github.workspace }}/artifacts/parity/windows/ppl-64
-          if-no-files-found: error
-
   linux-parity-vip:
     name: linux-parity-vip
     needs:
       - resolve-linux-context
       - linux-parity-ppl-64
-      - windows-host-ppl-32
-      - windows-host-ppl-64
     runs-on: ubuntu-latest
     outputs:
       gate_status: ${{ steps.capture-gate-metadata.outputs.gate_status }}
@@ -368,17 +302,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download windows host ppl-32 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-host-ppl-32-${{ github.run_id }}
-          path: ${{ github.workspace }}/artifacts/parity/linux/vip/inputs/windows-host-ppl-32
+      - name: Resolve Windows prerequisite artifact contract
+        id: resolve-prereq-artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $x86ArtifactName = [string]'${{ inputs.windows_prereq_x86_artifact_name }}'
+          if ([string]::IsNullOrWhiteSpace($x86ArtifactName)) {
+            $x86ArtifactName = "windows-host-linux-prereq-x86-$env:GITHUB_RUN_ID"
+          }
+          $x64ArtifactName = [string]'${{ inputs.windows_prereq_x64_artifact_name }}'
+          if ([string]::IsNullOrWhiteSpace($x64ArtifactName)) {
+            $x64ArtifactName = "windows-host-linux-prereq-x64-$env:GITHUB_RUN_ID"
+          }
+          $nativeVersion = [string]'${{ inputs.windows_prereq_native_labview_version }}'
+          if ([string]::IsNullOrWhiteSpace($nativeVersion)) {
+            $nativeVersion = [string]'${{ needs.resolve-linux-context.outputs.windows_host_native_labview_version }}'
+          }
+          if ([string]::IsNullOrWhiteSpace($nativeVersion)) {
+            $nativeVersion = '2025q3'
+          }
+          $contractNativeVersion = [string]'${{ needs.resolve-linux-context.outputs.windows_host_native_labview_version }}'
+          if (-not [string]::IsNullOrWhiteSpace($contractNativeVersion) -and $nativeVersion -ne $contractNativeVersion) {
+            throw "Windows prerequisite native version '$nativeVersion' does not match contract value '$contractNativeVersion'."
+          }
 
-      - name: Download windows host ppl-64 artifact
+          "windows_prereq_x86_artifact_name=$x86ArtifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "windows_prereq_x64_artifact_name=$x64ArtifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "windows_prereq_native_labview_version=$nativeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Download windows host native prereq x86 artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: windows-host-ppl-64-${{ github.run_id }}
-          path: ${{ github.workspace }}/artifacts/parity/linux/vip/inputs/windows-host-ppl-64
+          name: ${{ steps.resolve-prereq-artifacts.outputs.windows_prereq_x86_artifact_name }}
+          path: ${{ github.workspace }}/artifacts/parity/linux/vip/inputs/windows-host-prereq-x86
+
+      - name: Download windows host native prereq x64 artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.resolve-prereq-artifacts.outputs.windows_prereq_x64_artifact_name }}
+          path: ${{ github.workspace }}/artifacts/parity/linux/vip/inputs/windows-host-prereq-x64
 
       - name: Download linux parity ppl-64 artifact
         uses: actions/download-artifact@v4
@@ -393,7 +358,9 @@ jobs:
           RESOLVED_LINUX_TAG: ${{ needs.resolve-linux-context.outputs.resolved_linux_tag }}
           RAW_LVCONTAINER_TAG: ${{ needs.resolve-linux-context.outputs.raw_lvcontainer_tag }}
           WINDOWS_HOST_EXECUTION_MODE: ${{ needs.resolve-linux-context.outputs.windows_host_execution_mode }}
-          WINDOWS_HOST_NATIVE_LABVIEW_VERSION: ${{ needs.resolve-linux-context.outputs.windows_host_native_labview_version }}
+          WINDOWS_HOST_NATIVE_LABVIEW_VERSION: ${{ steps.resolve-prereq-artifacts.outputs.windows_prereq_native_labview_version }}
+          WINDOWS_PREREQ_X86_ARTIFACT_NAME: ${{ steps.resolve-prereq-artifacts.outputs.windows_prereq_x86_artifact_name }}
+          WINDOWS_PREREQ_X64_ARTIFACT_NAME: ${{ steps.resolve-prereq-artifacts.outputs.windows_prereq_x64_artifact_name }}
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host "::notice::[heartbeat] linux-parity-vip: start"
@@ -423,8 +390,8 @@ jobs:
             & docker info | Out-File -FilePath $dockerInfoLogPath -Encoding utf8
 
             $requiredPplPaths = [ordered]@{
-              ppl_32 = Join-Path $inputRoot 'windows-host-ppl-32/lv_icon_x86.lvlibp'
-              ppl_64 = Join-Path $inputRoot 'windows-host-ppl-64/lv_icon_x64.lvlibp'
+              ppl_32 = Join-Path $inputRoot 'windows-host-prereq-x86/lv_icon_x86.lvlibp'
+              ppl_64 = Join-Path $inputRoot 'windows-host-prereq-x64/lv_icon_x64.lvlibp'
             }
             foreach ($entry in $requiredPplPaths.GetEnumerator()) {
               if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf)) {
@@ -479,6 +446,10 @@ jobs:
               driver = 'vipm-api'
               required_ppl_bitness = @('32', '64')
               ppl_prerequisites = $requiredPplPaths
+              windows_prereq_artifacts = @{
+                x86 = [string]$env:WINDOWS_PREREQ_X86_ARTIFACT_NAME
+                x64 = [string]$env:WINDOWS_PREREQ_X64_ARTIFACT_NAME
+              }
               vipb_path = $vipbCandidate[0].FullName
               release_notes_path = $releaseNotesCandidate[0].FullName
               vipm_endpoint = $vipmProbe
@@ -508,6 +479,10 @@ jobs:
               resolved_linux_tag = [string]$env:RESOLVED_LINUX_TAG
               driver = 'vipm-api'
               required_ppl_bitness = @('32', '64')
+              windows_prereq_artifacts = @{
+                x86 = [string]$env:WINDOWS_PREREQ_X86_ARTIFACT_NAME
+                x64 = [string]$env:WINDOWS_PREREQ_X64_ARTIFACT_NAME
+              }
               artifact_role = 'signal-only'
               output_vip_glob = 'artifacts/parity/linux/vip/*'
               release_artifact_root = 'artifacts/release/*'
