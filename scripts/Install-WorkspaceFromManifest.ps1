@@ -990,6 +990,25 @@ $governanceAudit = [ordered]@{
     message = ''
 }
 $postActionSequence = New-Object System.Collections.ArrayList
+$contractSplit = [ordered]@{
+    execution_profile = 'host-release'
+    skip_vip_harness = $false
+    active_artifact_root = 'artifacts\release'
+    release_build_contract = [ordered]@{
+        required_year = '2020'
+        required_ppl_bitnesses = @('32', '64')
+        required_vip_bitness = '64'
+        artifact_root = 'artifacts\release'
+    }
+    container_parity_contract = [ordered]@{
+        artifact_root = 'artifacts\parity'
+        build_spec_kind = 'ppl'
+        build_spec_placeholder = 'srcdist'
+        allowed_windows_tags = @()
+        lvcontainer_raw = ''
+        windows_tag = ''
+    }
+}
 
 try {
     Write-InstallerFeedback -Message ("Starting workspace {0} run. workspace={1}" -f $Mode.ToLowerInvariant(), $resolvedWorkspaceRoot)
@@ -1050,9 +1069,20 @@ try {
         Write-InstallerFeedback -Message 'LVIE_OFFLINE_GIT_MODE is enabled; git network fetch/clone operations will be skipped.'
     }
 
-    $requiredLabviewYear = '2020'
-    $requiredPplBitnesses = @('32', '64')
-    $requiredVipBitness = '64'
+    $releaseRequiredLabviewYear = '2020'
+    $releaseRequiredPplBitnesses = @('32', '64')
+    $releaseRequiredVipBitness = '64'
+    $releaseArtifactRoot = 'artifacts\release'
+    $containerParityArtifactRoot = 'artifacts\parity'
+    $containerParityBuildSpecKind = 'ppl'
+    $containerParityBuildSpecPlaceholder = 'srcdist'
+    $containerParityAllowedWindowsTags = @()
+    $executionProfile = 'host-release'
+    $skipVipHarness = $false
+    $requiredLabviewYear = $releaseRequiredLabviewYear
+    $requiredPplBitnesses = @($releaseRequiredPplBitnesses)
+    $requiredVipBitness = $releaseRequiredVipBitness
+    $activeArtifactRoot = $releaseArtifactRoot
     $runnerCliRelativeRoot = 'tools\runner-cli\win-x64'
     $cliBundleRelativeRoot = 'tools\cdev-cli'
     $cliBundleAssetWin = 'cdev-cli-win-x64.zip'
@@ -1061,21 +1091,78 @@ try {
     $cliBundleAssetLinuxSha = ''
     $cliBundleEntrypointWin = 'tools\cdev-cli\win-x64\cdev-cli\scripts\Invoke-CdevCli.ps1'
     $cliBundleEntrypointLinux = 'tools/cdev-cli/linux-x64/cdev-cli/scripts/Invoke-CdevCli.ps1'
+    $executionProfileOverride = [string]$env:LVIE_INSTALLER_EXECUTION_PROFILE
+    if (-not [string]::IsNullOrWhiteSpace($executionProfileOverride)) {
+        if ($executionProfileOverride -notin @('host-release', 'container-parity')) {
+            throw "Invalid LVIE_INSTALLER_EXECUTION_PROFILE '$executionProfileOverride'. Expected 'host-release' or 'container-parity'."
+        }
+        $executionProfile = $executionProfileOverride
+    }
+    $parityLvcontainerRaw = [string]$env:LVIE_PARITY_LVCONTAINER_RAW
+    $parityWindowsTag = [string]$env:LVIE_PARITY_WINDOWS_TAG
+    $parityBuildSpecKindOverride = [string]$env:LVIE_PARITY_BUILD_SPEC_KIND
+    $parityBuildSpecPlaceholderOverride = [string]$env:LVIE_PARITY_BUILD_SPEC_PLACEHOLDER
     if ($null -ne $manifest.PSObject.Properties['installer_contract']) {
         $installerContract = $manifest.installer_contract
         if ($null -ne $installerContract.PSObject.Properties['labview_gate']) {
             $labviewGate = $installerContract.labview_gate
             if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_year)) {
-                $requiredLabviewYear = [string]$labviewGate.required_year
+                $releaseRequiredLabviewYear = [string]$labviewGate.required_year
             }
             if ($null -ne $labviewGate.PSObject.Properties['required_ppl_bitnesses']) {
-                $requiredPplBitnesses = @($labviewGate.required_ppl_bitnesses)
+                $releaseRequiredPplBitnesses = @($labviewGate.required_ppl_bitnesses)
             }
             if (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_vip_bitness)) {
-                $requiredVipBitness = [string]$labviewGate.required_vip_bitness
+                $releaseRequiredVipBitness = [string]$labviewGate.required_vip_bitness
             }
             if (($null -ne $labviewGate.PSObject.Properties['required_bitness']) -and (-not [string]::IsNullOrWhiteSpace([string]$labviewGate.required_bitness))) {
-                $requiredVipBitness = [string]$labviewGate.required_bitness
+                $releaseRequiredVipBitness = [string]$labviewGate.required_bitness
+            }
+        }
+        if ($null -ne $installerContract.PSObject.Properties['release_build_contract']) {
+            $releaseBuildContract = $installerContract.release_build_contract
+            if (-not [string]::IsNullOrWhiteSpace([string]$releaseBuildContract.required_year)) {
+                $releaseRequiredLabviewYear = [string]$releaseBuildContract.required_year
+            }
+            if ($null -ne $releaseBuildContract.PSObject.Properties['required_ppl_bitnesses']) {
+                $releaseRequiredPplBitnesses = @($releaseBuildContract.required_ppl_bitnesses)
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$releaseBuildContract.required_vip_bitness)) {
+                $releaseRequiredVipBitness = [string]$releaseBuildContract.required_vip_bitness
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$releaseBuildContract.artifact_root)) {
+                $releaseArtifactRoot = [string]$releaseBuildContract.artifact_root
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$releaseBuildContract.required_execution_profile)) {
+                $expectedReleaseExecutionProfile = [string]$releaseBuildContract.required_execution_profile
+                if ($expectedReleaseExecutionProfile -notin @('host-release', 'container-parity')) {
+                    throw "Installer contract release_build_contract.required_execution_profile is invalid: '$expectedReleaseExecutionProfile'."
+                }
+            }
+        }
+        if ($null -ne $installerContract.PSObject.Properties['container_parity_contract']) {
+            $containerParityContract = $installerContract.container_parity_contract
+            if (-not [string]::IsNullOrWhiteSpace([string]$containerParityContract.artifact_root)) {
+                $containerParityArtifactRoot = [string]$containerParityContract.artifact_root
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$containerParityContract.build_spec_kind)) {
+                $containerParityBuildSpecKind = [string]$containerParityContract.build_spec_kind
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$containerParityContract.build_spec_placeholder)) {
+                $containerParityBuildSpecPlaceholder = [string]$containerParityContract.build_spec_placeholder
+            }
+            if ($null -ne $containerParityContract.PSObject.Properties['allowed_windows_tags']) {
+                $containerParityAllowedWindowsTags = @(
+                    @($containerParityContract.allowed_windows_tags) |
+                    ForEach-Object { [string]$_ } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                )
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$containerParityContract.required_execution_profile)) {
+                $expectedParityExecutionProfile = [string]$containerParityContract.required_execution_profile
+                if ($expectedParityExecutionProfile -notin @('host-release', 'container-parity')) {
+                    throw "Installer contract container_parity_contract.required_execution_profile is invalid: '$expectedParityExecutionProfile'."
+                }
             }
         }
         if ($null -ne $installerContract.PSObject.Properties['runner_cli_bundle']) {
@@ -1114,6 +1201,26 @@ try {
         $cliBundle.source_commit = ([string]$cliBundleContract.source_commit).ToLowerInvariant()
     }
 
+    if ($executionProfile -eq 'container-parity') {
+        $skipVipHarness = $true
+        $requiredLabviewYear = $releaseRequiredLabviewYear
+        $requiredPplBitnesses = @($releaseRequiredPplBitnesses)
+        $requiredVipBitness = $releaseRequiredVipBitness
+        $activeArtifactRoot = $containerParityArtifactRoot
+    } else {
+        $requiredLabviewYear = $releaseRequiredLabviewYear
+        $requiredPplBitnesses = @($releaseRequiredPplBitnesses)
+        $requiredVipBitness = $releaseRequiredVipBitness
+        $activeArtifactRoot = $releaseArtifactRoot
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($parityBuildSpecKindOverride)) {
+        $containerParityBuildSpecKind = $parityBuildSpecKindOverride
+    }
+    if (-not [string]::IsNullOrWhiteSpace($parityBuildSpecPlaceholderOverride)) {
+        $containerParityBuildSpecPlaceholder = $parityBuildSpecPlaceholderOverride
+    }
+
     $requiredLabviewYearOverride = [string]$env:LVIE_GATE_REQUIRED_LABVIEW_YEAR
     if (-not [string]::IsNullOrWhiteSpace($requiredLabviewYearOverride)) {
         if ($requiredLabviewYearOverride -notmatch '^\d{4}$') {
@@ -1140,14 +1247,23 @@ try {
             Sort-Object)
     )
     $requiredPplBitnessLabel = [string]::Join(',', @($requiredPplBitnesses))
-    if ([string]::IsNullOrWhiteSpace($singlePplBitnessOverride)) {
-        if ($requiredPplBitnessLabel -ne '32,64') {
-            throw "Installer contract requires dual PPL bitness gating ['32','64']; received '$requiredPplBitnessLabel'."
+    if ($executionProfile -eq 'host-release') {
+        if ([string]::IsNullOrWhiteSpace($singlePplBitnessOverride)) {
+            if ($requiredPplBitnessLabel -ne '32,64') {
+                throw "Installer contract requires dual PPL bitness gating ['32','64']; received '$requiredPplBitnessLabel'."
+            }
+        } elseif ($requiredPplBitnessLabel -ne $singlePplBitnessOverride) {
+            throw "PPL bitness override '$singlePplBitnessOverride' was not applied; effective set is '$requiredPplBitnessLabel'."
         }
-    } elseif ($requiredPplBitnessLabel -ne $singlePplBitnessOverride) {
-        throw "PPL bitness override '$singlePplBitnessOverride' was not applied; effective set is '$requiredPplBitnessLabel'."
+    } else {
+        if ([string]::IsNullOrWhiteSpace($singlePplBitnessOverride)) {
+            throw "Container parity profile requires LVIE_GATE_SINGLE_PPL_BITNESS ('32' or '64')."
+        }
+        if ($requiredPplBitnessLabel -ne $singlePplBitnessOverride) {
+            throw "PPL bitness override '$singlePplBitnessOverride' was not applied; effective set is '$requiredPplBitnessLabel'."
+        }
     }
-    if ($requiredVipBitness -ne '64') {
+    if (($executionProfile -eq 'host-release') -and ($requiredVipBitness -ne '64')) {
         throw "Installer contract requires VIP bitness '64'; received '$requiredVipBitness'."
     }
     if ([string]::IsNullOrWhiteSpace($cliBundleAssetWin) -or [string]::IsNullOrWhiteSpace($cliBundleAssetLinux)) {
@@ -1175,6 +1291,25 @@ try {
     }
     $vipPackageBuildCheck.required_labview_year = $requiredLabviewYear
     $vipPackageBuildCheck.required_bitness = $requiredVipBitness
+    $contractSplit = [ordered]@{
+        execution_profile = $executionProfile
+        skip_vip_harness = $skipVipHarness
+        active_artifact_root = $activeArtifactRoot
+        release_build_contract = [ordered]@{
+            required_year = $releaseRequiredLabviewYear
+            required_ppl_bitnesses = @($releaseRequiredPplBitnesses)
+            required_vip_bitness = $releaseRequiredVipBitness
+            artifact_root = $releaseArtifactRoot
+        }
+        container_parity_contract = [ordered]@{
+            artifact_root = $containerParityArtifactRoot
+            build_spec_kind = $containerParityBuildSpecKind
+            build_spec_placeholder = $containerParityBuildSpecPlaceholder
+            allowed_windows_tags = @($containerParityAllowedWindowsTags)
+            lvcontainer_raw = $parityLvcontainerRaw
+            windows_tag = $parityWindowsTag
+        }
+    }
 
     $repoTotal = @($manifest.managed_repos).Count
     $repoIndex = 0
@@ -1582,9 +1717,15 @@ try {
                     $pplCapabilityChecks[$bitness].message = $blockingMessage
                     Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'ppl-build' -Bitness $bitness -Status 'fail' -Message $blockingMessage
                 }
-                $vipPackageBuildCheck.status = 'blocked'
-                $vipPackageBuildCheck.message = 'VIP harness was not run because icon-editor repository contract failed.'
-                Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
+                if ($skipVipHarness) {
+                    $vipPackageBuildCheck.status = 'skipped'
+                    $vipPackageBuildCheck.message = "VIP harness is skipped for execution profile '$executionProfile'."
+                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'skipped' -Message $vipPackageBuildCheck.message
+                } else {
+                    $vipPackageBuildCheck.status = 'blocked'
+                    $vipPackageBuildCheck.message = 'VIP harness was not run because icon-editor repository contract failed.'
+                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
+                }
                 $errors += $blockingMessage
             } else {
                 $allPplPass = $true
@@ -1649,45 +1790,57 @@ try {
                 }
 
                 if (-not $allPplPass) {
-                    $vipPackageBuildCheck.status = 'blocked'
-                    $vipPackageBuildCheck.message = 'VIP harness was not run because one or more PPL capability checks failed.'
-                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
-                } else {
-                    Write-InstallerFeedback -Message 'Running runner-cli VI Package harness gate.'
-                    $vipResult = Invoke-RunnerCliVipPackageHarnessCheck `
-                        -RunnerCliPath $runnerCliExePath `
-                        -PowerShellExecutable $runtimePowerShellExecutable `
-                        -IconEditorRepoPath $iconEditorRepoPath `
-                        -PinnedSha $iconEditorPinnedSha `
-                        -RequiredLabviewYear ([string]$requiredLabviewYear) `
-                        -RequiredBitness ([string]$requiredVipBitness)
-
-                    $vipPackageBuildCheck = [ordered]@{
-                        status = [string]$vipResult.status
-                        message = [string]$vipResult.message
-                        runner_cli_path = [string]$vipResult.runner_cli_path
-                        repo_path = [string]$vipResult.repo_path
-                        required_labview_year = [string]$vipResult.required_labview_year
-                        required_bitness = [string]$vipResult.required_bitness
-                        vipb_path = [string]$vipResult.vipb_path
-                        vipc_path = [string]$vipResult.vipc_path
-                        vipc_assert_output_path = [string]$vipResult.vipc_assert_output_path
-                        vip_build_status_path = [string]$vipResult.vip_build_status_path
-                        release_notes_path = [string]$vipResult.release_notes_path
-                        display_information_path = [string]$vipResult.display_information_path
-                        output_vip_path = [string]$vipResult.output_vip_path
-                        command = [ordered]@{
-                            vipc_assert = @($vipResult.command.vipc_assert)
-                            vipc_apply = @($vipResult.command.vipc_apply)
-                            vip_build = @($vipResult.command.vip_build)
-                        }
-                        exit_code = $vipResult.exit_code
-                        labview_install_root = [string]$vipResult.labview_install_root
+                    if ($skipVipHarness) {
+                        $vipPackageBuildCheck.status = 'skipped'
+                        $vipPackageBuildCheck.message = "VIP harness is skipped for execution profile '$executionProfile'."
+                        Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'skipped' -Message $vipPackageBuildCheck.message
+                    } else {
+                        $vipPackageBuildCheck.status = 'blocked'
+                        $vipPackageBuildCheck.message = 'VIP harness was not run because one or more PPL capability checks failed.'
+                        Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'blocked' -Message $vipPackageBuildCheck.message
                     }
-                    Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status ([string]$vipResult.status) -Message ([string]$vipResult.message)
+                } else {
+                    if ($skipVipHarness) {
+                        $vipPackageBuildCheck.status = 'skipped'
+                        $vipPackageBuildCheck.message = "VIP harness is skipped for execution profile '$executionProfile'."
+                        Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status 'skipped' -Message $vipPackageBuildCheck.message
+                    } else {
+                        Write-InstallerFeedback -Message 'Running runner-cli VI Package harness gate.'
+                        $vipResult = Invoke-RunnerCliVipPackageHarnessCheck `
+                            -RunnerCliPath $runnerCliExePath `
+                            -PowerShellExecutable $runtimePowerShellExecutable `
+                            -IconEditorRepoPath $iconEditorRepoPath `
+                            -PinnedSha $iconEditorPinnedSha `
+                            -RequiredLabviewYear ([string]$requiredLabviewYear) `
+                            -RequiredBitness ([string]$requiredVipBitness)
 
-                    if ($vipPackageBuildCheck.status -ne 'pass') {
-                        $errors += "Runner CLI VIP harness check failed. $($vipPackageBuildCheck.message)"
+                        $vipPackageBuildCheck = [ordered]@{
+                            status = [string]$vipResult.status
+                            message = [string]$vipResult.message
+                            runner_cli_path = [string]$vipResult.runner_cli_path
+                            repo_path = [string]$vipResult.repo_path
+                            required_labview_year = [string]$vipResult.required_labview_year
+                            required_bitness = [string]$vipResult.required_bitness
+                            vipb_path = [string]$vipResult.vipb_path
+                            vipc_path = [string]$vipResult.vipc_path
+                            vipc_assert_output_path = [string]$vipResult.vipc_assert_output_path
+                            vip_build_status_path = [string]$vipResult.vip_build_status_path
+                            release_notes_path = [string]$vipResult.release_notes_path
+                            display_information_path = [string]$vipResult.display_information_path
+                            output_vip_path = [string]$vipResult.output_vip_path
+                            command = [ordered]@{
+                                vipc_assert = @($vipResult.command.vipc_assert)
+                                vipc_apply = @($vipResult.command.vipc_apply)
+                                vip_build = @($vipResult.command.vip_build)
+                            }
+                            exit_code = $vipResult.exit_code
+                            labview_install_root = [string]$vipResult.labview_install_root
+                        }
+                        Add-PostActionSequenceEntry -Sequence $postActionSequence -Phase 'vip-harness' -Bitness $requiredVipBitness -Status ([string]$vipResult.status) -Message ([string]$vipResult.message)
+
+                        if ($vipPackageBuildCheck.status -ne 'pass') {
+                            $errors += "Runner CLI VIP harness check failed. $($vipPackageBuildCheck.message)"
+                        }
                     }
                 }
             }
@@ -1798,9 +1951,11 @@ $report = [ordered]@{
     status = $status
     mode = $Mode
     execution_context = $InstallerExecutionContext
+    execution_profile = $executionProfile
     workspace_root = $resolvedWorkspaceRoot
     manifest_path = $resolvedManifestPath
     output_path = $resolvedOutputPath
+    contract_split = $contractSplit
     dependency_checks = $dependencyChecks
     payload_sync = $payloadSync
     repositories = $repositoryResults

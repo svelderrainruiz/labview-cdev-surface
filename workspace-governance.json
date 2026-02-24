@@ -7,6 +7,39 @@
       "sha256_file": "runner-cli.exe.sha256",
       "metadata_file": "runner-cli.metadata.json"
     },
+    "release_build_contract": {
+      "labview_version_source": ".lvversion",
+      "required_year": "2020",
+      "required_ppl_bitnesses": [
+        "32",
+        "64"
+      ],
+      "required_vip_bitness": "64",
+      "required_execution_profile": "host-release",
+      "artifact_root": "artifacts\\release",
+      "promotable_artifacts": [
+        "ppl",
+        "vip"
+      ]
+    },
+    "container_parity_contract": {
+      "lvcontainer_source_repo": "labview-icon-editor",
+      "lvcontainer_file": ".lvcontainer",
+      "windows_tag_strategy": "derive-from-lvcontainer",
+      "allowed_windows_tags": [
+        "2025q4-windows",
+        "2026q1-windows"
+      ],
+      "required_execution_profile": "container-parity",
+      "artifact_root": "artifacts\\parity",
+      "build_spec_kind": "ppl",
+      "build_spec_placeholder": "srcdist",
+      "promote_artifacts": false,
+      "responsibilities": [
+        "project-spec-build",
+        "vi-analyzer"
+      ]
+    },
     "labview_gate": {
       "required_year": "2020",
       "required_ppl_bitnesses": [

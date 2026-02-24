@@ -25,61 +25,66 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:wrapperWorkflowContent | Should -Match 'uses:\s*\./\.github/workflows/_windows-labview-image-gate-core\.yml'
     }
 
-    It 'targets windows containers with installer-post-action report checks in core workflow' {
+    It 'defines split hard-gate topology with resolve, host, parity, and summary lanes' {
         $script:coreWorkflowContent | Should -Match 'workflow_call:'
-        $script:coreWorkflowContent | Should -Match 'runs-on:\s*\[self-hosted,\s*windows,\s*self-hosted-windows-lv,\s*windows-containers,\s*user-session,\s*cdev-surface-windows-gate\]'
-        $script:coreWorkflowContent | Should -Match 'shell:\s*powershell'
-        $script:coreWorkflowContent | Should -Not -Match 'shell:\s*pwsh'
-        $script:coreWorkflowContent | Should -Not -Match '&\s*pwsh\s+-NoProfile\s+-File'
-        $script:coreWorkflowContent | Should -Match 'nationalinstruments/labview:2026q1-windows'
-        $script:coreWorkflowContent | Should -Match 'LABVIEW_WINDOWS_IMAGE'
-        $script:coreWorkflowContent | Should -Match 'LABVIEW_WINDOWS_DOCKER_ISOLATION'
-        $script:coreWorkflowContent | Should -Match "docker version --format '\{\{\.Server\.Os\}\}'"
-        $script:coreWorkflowContent | Should -Match 'docker manifest inspect --verbose'
-        $script:coreWorkflowContent | Should -Match 'Windows container compatibility mismatch'
-        $script:coreWorkflowContent | Should -Match 'Falling back to Hyper-V isolation'
-        $script:coreWorkflowContent | Should -Match '--isolation=\$dockerIsolation'
-        $script:coreWorkflowContent | Should -Match 'automatic engine switching is disabled for non-interactive CI'
-        $script:coreWorkflowContent | Should -Match "\$requiredCommands = @\('powershell', 'git', 'gh'\)"
-        $script:coreWorkflowContent | Should -Match 'Container runtime missing required commands after host-tool mount'
-        $script:coreWorkflowContent | Should -Match "VIPM_COMMUNITY_EDITION = 'true'"
-        $script:coreWorkflowContent | Should -Match '--env "VIPM_COMMUNITY_EDITION=true"'
-        $script:coreWorkflowContent | Should -Match 'LVIE_OFFLINE_GIT_MODE'
-        $script:coreWorkflowContent | Should -Match '--env "LVIE_OFFLINE_GIT_MODE=true"'
-        $script:coreWorkflowContent | Should -Match '-RequiredLabviewYear \$requiredLabviewYear'
-        $script:coreWorkflowContent | Should -Match 'LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD'
-        $script:coreWorkflowContent | Should -Match 'LVIE_GATE_REQUIRED_LABVIEW_YEAR'
-        $script:coreWorkflowContent | Should -Match 'LVIE_GATE_SINGLE_PPL_BITNESS'
-        $script:coreWorkflowContent | Should -Match '--env "LVIE_GATE_REQUIRED_LABVIEW_YEAR=\$gateRequiredLabviewYear"'
-        $script:coreWorkflowContent | Should -Match '--env "LVIE_GATE_SINGLE_PPL_BITNESS=\$singlePplBitness"'
-        $script:coreWorkflowContent | Should -Match '--env "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=\$labviewX86NipkgInstallCmd"'
-        $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26\.1/released --name=ni-labview-2026-core-x86-en-2026-q1-released'
-        $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20\.0/released --name=ni-labview-2020-core-x86-en-2020-released'
-        $script:coreWorkflowContent | Should -Not -Match 'feed-add\s+ni-labview-[^\s]+\s+https://'
-        $script:coreWorkflowContent | Should -Match "\$hostDevRoot = 'C:\\dev'"
-        $script:coreWorkflowContent | Should -Match "\$hostLabview2020x64Root = 'C:\\Program Files\\National Instruments\\LabVIEW 2020'"
-        $script:coreWorkflowContent | Should -Match "\$hostLabview2020x86Root = 'C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020'"
-        $script:coreWorkflowContent | Should -Not -Match 'hostPwshRoot'
-        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostDevRoot,target=C:\\dev"'
-        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostLabview2020x64Root,target=C:\\Program Files\\National Instruments\\LabVIEW 2020,readonly"'
-        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostLabview2020x86Root,target=C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020,readonly"'
-        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGitRoot,target=C:\\host-tools\\Git,readonly"'
-        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGhRoot,target=C:\\host-tools\\GitHubCLI,readonly"'
-        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGCliRoot,target=C:\\host-tools\\G-CLI,readonly"'
-        $script:coreWorkflowContent | Should -Match 'Install-WorkspaceFromManifest\.ps1'
-        $script:coreWorkflowContent | Should -Match 'workspace-install-latest\.json'
-        $script:coreWorkflowContent | Should -Match "ppl_capability_checks\.'32'\.status"
-        $script:coreWorkflowContent | Should -Match "ppl_capability_checks\.'64'\.status"
-        $script:coreWorkflowContent | Should -Match 'selected_ppl_bitness'
-        $script:coreWorkflowContent | Should -Match 'selected_ppl_status'
-        $script:coreWorkflowContent | Should -Match 'vip_package_build_check\.status'
+        $script:coreWorkflowContent | Should -Match '(?m)^\s*resolve-parity-context:\s*$'
+        $script:coreWorkflowContent | Should -Match '(?m)^\s*windows-host-release-gate:\s*$'
+        $script:coreWorkflowContent | Should -Match '(?m)^\s*windows-container-parity-gate:\s*$'
+        $script:coreWorkflowContent | Should -Match '(?m)^\s*gate-summary:\s*$'
+        $script:coreWorkflowContent | Should -Match 'needs:\s*\[resolve-parity-context\]'
+        $script:coreWorkflowContent | Should -Match "needs:\s*\[windows-host-release-gate,\s*windows-container-parity-gate\]"
         $script:coreWorkflowContent | Should -Match 'gate_status'
         $script:coreWorkflowContent | Should -Match 'gate_report_artifact_name'
         $script:coreWorkflowContent | Should -Match 'gate_report_path'
     }
 
-    It 'publishes gate artifacts for troubleshooting from reusable core' {
+    It 'uses expected runner labels for host release and container parity lanes' {
+        $script:coreWorkflowContent | Should -Match 'runs-on:\s*\[self-hosted,\s*windows,\s*self-hosted-windows-lv\]'
+        $script:coreWorkflowContent | Should -Match 'runs-on:\s*\[self-hosted,\s*windows,\s*self-hosted-windows-lv,\s*windows-containers,\s*user-session,\s*cdev-surface-windows-gate\]'
+    }
+
+    It 'resolves parity image from pinned icon-editor .lvcontainer and fails on override mismatch' {
+        $script:coreWorkflowContent | Should -Match '\.lvcontainer'
+        $script:coreWorkflowContent | Should -Match 'icon_editor_pinned_sha'
+        $script:coreWorkflowContent | Should -Match 'icon_editor_source_url'
+        $script:coreWorkflowContent | Should -Match '\$\{lvcontainer_raw%-linux\}-windows'
+        $script:coreWorkflowContent | Should -Match 'allowed_windows_tags'
+        $script:coreWorkflowContent | Should -Match 'LABVIEW_WINDOWS_IMAGE override'
+        $script:coreWorkflowContent | Should -Match 'nationalinstruments/labview:\$\{lvcontainer_windows_tag\}'
+        $script:coreWorkflowContent | Should -Match 'Windows Container Parity \(\$\{\{\s*needs\.resolve-parity-context\.outputs\.lvcontainer_raw\s*\}\}\s*\|\s*b\$\{\{\s*needs\.resolve-parity-context\.outputs\.selected_ppl_bitness\s*\}\}\s*\|'
+    }
+
+    It 'keeps windows powershell-first surface and avoids pwsh hard dependency' {
+        $script:coreWorkflowContent | Should -Match 'shell:\s*powershell'
+        $script:coreWorkflowContent | Should -Not -Match 'shell:\s*pwsh'
+        $script:coreWorkflowContent | Should -Not -Match '&\s*pwsh\s+-NoProfile\s+-File'
+        $script:coreWorkflowContent | Should -Match 'LVIE_INSTALLER_EXECUTION_PROFILE = ''host-release'''
+        $script:coreWorkflowContent | Should -Match 'LVIE_INSTALLER_EXECUTION_PROFILE = ''container-parity'''
+    }
+
+    It 'enforces release-vs-parity post-action roles and vi analyzer parity execution' {
+        $script:coreWorkflowContent | Should -Match 'vip_package_build_check\.status'
+        $script:coreWorkflowContent | Should -Match 'Host release VIP gate did not pass'
+        $script:coreWorkflowContent | Should -Match 'must skip VIP build'
+        $script:coreWorkflowContent | Should -Match 'run-vi-analyzer-windows\.ps1'
+        $script:coreWorkflowContent | Should -Match 'vi-analyzer-summary\.parity\.windows\.gate\.json'
+        $script:coreWorkflowContent | Should -Match 'PARITY_BUILD_SPEC_MARKER'
+    }
+
+    It 'keeps valid feed-add command ordering and container fallback diagnostics contract' {
+        $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26\.1/released --name=ni-labview-2026-core-x86-en-2026-q1-released'
+        $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20\.0/released --name=ni-labview-2020-core-x86-en-2020-released'
+        $script:coreWorkflowContent | Should -Not -Match 'feed-add\s+ni-labview-[^\s]+\s+https://'
+        $script:coreWorkflowContent | Should -Match 'container_boot_failure'
+        $script:coreWorkflowContent | Should -Match 'container-fallback-diagnostics\.json'
+        $script:coreWorkflowContent | Should -Match 'docker manifest inspect --verbose'
+        $script:coreWorkflowContent | Should -Match 'automatic engine switching is disabled for non-interactive CI'
+    }
+
+    It 'publishes split gate artifacts for troubleshooting' {
+        $script:coreWorkflowContent | Should -Match 'windows-labview-image-gate-release-\$\{\{\s*github\.run_id\s*\}\}'
+        $script:coreWorkflowContent | Should -Match 'windows-labview-image-gate-parity-\$\{\{\s*github\.run_id\s*\}\}'
         $script:coreWorkflowContent | Should -Match 'upload-artifact'
-        $script:coreWorkflowContent | Should -Match 'if-no-files-found:'
+        $script:coreWorkflowContent | Should -Match 'if-no-files-found:\s*error'
     }
 }

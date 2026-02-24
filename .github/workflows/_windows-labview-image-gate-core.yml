@@ -5,39 +5,167 @@ on:
     outputs:
       gate_status:
         description: Pass/fail status for the Windows image gate.
-        value: ${{ jobs.windows-labview-image-gate.outputs.gate_status }}
+        value: ${{ jobs.gate-summary.outputs.gate_status }}
       gate_report_artifact_name:
         description: Artifact name containing gate logs and reports.
-        value: ${{ jobs.windows-labview-image-gate.outputs.gate_report_artifact_name }}
+        value: ${{ jobs.gate-summary.outputs.gate_report_artifact_name }}
       gate_report_path:
         description: Full path for the generated windows image gate report JSON.
-        value: ${{ jobs.windows-labview-image-gate.outputs.gate_report_path }}
+        value: ${{ jobs.gate-summary.outputs.gate_report_path }}
 
 permissions:
   contents: read
 
 jobs:
-  windows-labview-image-gate:
-    name: Windows LabVIEW Image Gate
-    runs-on: [self-hosted, windows, self-hosted-windows-lv, windows-containers, user-session, cdev-surface-windows-gate]
+  resolve-parity-context:
+    name: Resolve Container Parity Context
+    runs-on: ubuntu-latest
     outputs:
-      gate_status: ${{ steps.capture-gate-metadata.outputs.gate_status }}
-      gate_report_artifact_name: ${{ steps.capture-gate-metadata.outputs.gate_report_artifact_name }}
-      gate_report_path: ${{ steps.capture-gate-metadata.outputs.gate_report_path }}
+      lvcontainer_raw: ${{ steps.resolve.outputs.lvcontainer_raw }}
+      lvcontainer_windows_tag: ${{ steps.resolve.outputs.lvcontainer_windows_tag }}
+      lvcontainer_windows_image: ${{ steps.resolve.outputs.lvcontainer_windows_image }}
+      lvcontainer_year: ${{ steps.resolve.outputs.lvcontainer_year }}
+      selected_ppl_bitness: ${{ steps.resolve.outputs.selected_ppl_bitness }}
+      build_spec_marker: ${{ steps.resolve.outputs.build_spec_marker }}
+      release_required_year: ${{ steps.resolve.outputs.release_required_year }}
+      icon_editor_source_url: ${{ steps.resolve.outputs.icon_editor_source_url }}
+      icon_editor_pinned_sha: ${{ steps.resolve.outputs.icon_editor_pinned_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build installer payload for gate
+      - name: Resolve lvcontainer context from pinned icon-editor commit
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest_path="$GITHUB_WORKSPACE/workspace-governance.json"
+          if [[ ! -f "$manifest_path" ]]; then
+            echo "Manifest not found: $manifest_path" >&2
+            exit 1
+          fi
+
+          repo_json="$(jq -c '.managed_repos[] | select(.repo_name=="labview-icon-editor")' "$manifest_path")"
+          if [[ -z "$repo_json" ]]; then
+            echo "workspace-governance.json does not define managed repo 'labview-icon-editor'." >&2
+            exit 1
+          fi
+
+          icon_editor_source_url="$(echo "$repo_json" | jq -r '.required_remotes.origin // empty')"
+          icon_editor_pinned_sha="$(echo "$repo_json" | jq -r '.pinned_sha // empty')"
+          if [[ -z "$icon_editor_source_url" || -z "$icon_editor_pinned_sha" ]]; then
+            echo "Missing origin URL or pinned SHA for managed repo 'labview-icon-editor'." >&2
+            exit 1
+          fi
+
+          release_required_year="$(jq -r '.installer_contract.release_build_contract.required_year // .installer_contract.labview_gate.required_year // "2020"' "$manifest_path")"
+          if [[ ! "$release_required_year" =~ ^[0-9]{4}$ ]]; then
+            echo "Invalid release required year '$release_required_year' in installer contract." >&2
+            exit 1
+          fi
+
+          selected_ppl_bitness='${{ vars.LABVIEW_GATE_SINGLE_PPL_BITNESS }}'
+          if [[ -z "$selected_ppl_bitness" ]]; then
+            selected_ppl_bitness='64'
+          fi
+          if [[ "$selected_ppl_bitness" != "32" && "$selected_ppl_bitness" != "64" ]]; then
+            echo "Invalid LABVIEW_GATE_SINGLE_PPL_BITNESS '$selected_ppl_bitness'. Expected 32 or 64." >&2
+            exit 1
+          fi
+
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "$tmp_root"' EXIT
+          clone_root="$tmp_root/icon-editor"
+
+          git clone --quiet --no-tags "$icon_editor_source_url" "$clone_root"
+          git -C "$clone_root" checkout --quiet --detach "$icon_editor_pinned_sha"
+
+          lvcontainer_path="$clone_root/.lvcontainer"
+          if [[ ! -f "$lvcontainer_path" ]]; then
+            echo ".lvcontainer was not found at pinned icon-editor commit '$icon_editor_pinned_sha'." >&2
+            exit 1
+          fi
+
+          lvcontainer_raw="$(tr -d '\r\n' < "$lvcontainer_path")"
+          if [[ -z "$lvcontainer_raw" ]]; then
+            echo ".lvcontainer is empty at pinned icon-editor commit '$icon_editor_pinned_sha'." >&2
+            exit 1
+          fi
+
+          if [[ "$lvcontainer_raw" =~ -windows$ ]]; then
+            lvcontainer_windows_tag="$lvcontainer_raw"
+          elif [[ "$lvcontainer_raw" =~ -linux$ ]]; then
+            lvcontainer_windows_tag="${lvcontainer_raw%-linux}-windows"
+          else
+            echo "Unsupported .lvcontainer tag '$lvcontainer_raw'. Expected '*-linux' or '*-windows'." >&2
+            exit 1
+          fi
+
+          if [[ ! "$lvcontainer_windows_tag" =~ ^(latest|[0-9]{4}q[0-9]+)-windows$ ]]; then
+            echo "Resolved windows tag '$lvcontainer_windows_tag' is invalid." >&2
+            exit 1
+          fi
+
+          mapfile -t allowed_windows_tags < <(jq -r '.installer_contract.container_parity_contract.allowed_windows_tags[]? // empty' "$manifest_path")
+          if (( ${#allowed_windows_tags[@]} > 0 )); then
+            tag_allowed='false'
+            for allowed in "${allowed_windows_tags[@]}"; do
+              if [[ "$allowed" == "$lvcontainer_windows_tag" ]]; then
+                tag_allowed='true'
+                break
+              fi
+            done
+            if [[ "$tag_allowed" != 'true' ]]; then
+              echo "Resolved windows tag '$lvcontainer_windows_tag' is not in allowed_windows_tags contract." >&2
+              exit 1
+            fi
+          fi
+
+          lvcontainer_year=''
+          if [[ "$lvcontainer_windows_tag" =~ ^([0-9]{4})q[0-9]+-windows$ ]]; then
+            lvcontainer_year="${BASH_REMATCH[1]}"
+          fi
+          if [[ -z "$lvcontainer_year" ]]; then
+            echo "Unable to derive LabVIEW year from resolved windows tag '$lvcontainer_windows_tag'." >&2
+            exit 1
+          fi
+
+          lvcontainer_windows_image="nationalinstruments/labview:${lvcontainer_windows_tag}"
+
+          build_spec_kind="$(jq -r '.installer_contract.container_parity_contract.build_spec_kind // "ppl"' "$manifest_path")"
+          build_spec_placeholder="$(jq -r '.installer_contract.container_parity_contract.build_spec_placeholder // "srcdist"' "$manifest_path")"
+          build_spec_marker="${build_spec_kind}+${build_spec_placeholder}-placeholder"
+
+          echo "lvcontainer_raw=$lvcontainer_raw" >> "$GITHUB_OUTPUT"
+          echo "lvcontainer_windows_tag=$lvcontainer_windows_tag" >> "$GITHUB_OUTPUT"
+          echo "lvcontainer_windows_image=$lvcontainer_windows_image" >> "$GITHUB_OUTPUT"
+          echo "lvcontainer_year=$lvcontainer_year" >> "$GITHUB_OUTPUT"
+          echo "selected_ppl_bitness=$selected_ppl_bitness" >> "$GITHUB_OUTPUT"
+          echo "build_spec_marker=$build_spec_marker" >> "$GITHUB_OUTPUT"
+          echo "release_required_year=$release_required_year" >> "$GITHUB_OUTPUT"
+          echo "icon_editor_source_url=$icon_editor_source_url" >> "$GITHUB_OUTPUT"
+          echo "icon_editor_pinned_sha=$icon_editor_pinned_sha" >> "$GITHUB_OUTPUT"
+
+  windows-host-release-gate:
+    name: Windows Host Release Gate (LabVIEW ${{ needs.resolve-parity-context.outputs.release_required_year }})
+    needs: [resolve-parity-context]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build installer payload for host-release gate
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate\release'
           $payloadRoot = Join-Path $gateRoot 'payload'
           if (Test-Path -LiteralPath $gateRoot -PathType Container) {
             Remove-Item -LiteralPath $gateRoot -Recurse -Force
           }
           New-Item -Path $payloadRoot -ItemType Directory -Force | Out-Null
+
           $payloadContractRoot = Join-Path $env:GITHUB_WORKSPACE 'workspace-governance-payload'
           if (-not (Test-Path -LiteralPath $payloadContractRoot -PathType Container)) {
             throw "Canonical payload root not found: $payloadContractRoot"
@@ -46,7 +174,6 @@ jobs:
 
           New-Item -Path (Join-Path $payloadRoot 'scripts') -ItemType Directory -Force | Out-Null
           New-Item -Path (Join-Path $payloadRoot 'tools\runner-cli\win-x64') -ItemType Directory -Force | Out-Null
-
           Copy-Item -Path "$env:GITHUB_WORKSPACE/scripts/Install-WorkspaceFromManifest.ps1" -Destination (Join-Path $payloadRoot 'scripts/Install-WorkspaceFromManifest.ps1') -Force
 
           & powershell -NoProfile -ExecutionPolicy RemoteSigned -File "$env:GITHUB_WORKSPACE/scripts/Build-RunnerCliBundleFromManifest.ps1" `
@@ -56,63 +183,217 @@ jobs:
             -Runtime 'win-x64' `
             -Deterministic:$true
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build runner-cli bundle for windows image gate."
+            throw 'Failed to build runner-cli bundle for host release gate.'
+          }
+
+          $requiredLabviewYear = '${{ needs.resolve-parity-context.outputs.release_required_year }}'
+          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
+            throw 'Resolved release required year is empty.'
+          }
+          if ($requiredLabviewYear -ne '2020') {
+            throw "Host release contract requires LabVIEW 2020 only. resolved_year=$requiredLabviewYear"
           }
 
           $installerPath = Join-Path $gateRoot 'lvie-cdev-workspace-installer.exe'
-          $labviewImageForGate = '${{ vars.LABVIEW_WINDOWS_IMAGE }}'
-          if ([string]::IsNullOrWhiteSpace($labviewImageForGate)) {
-            $labviewImageForGate = 'nationalinstruments/labview:2026q1-windows'
-          }
-
-          $requiredLabviewYear = ''
-          $requiredLabviewYearOverride = '${{ vars.LABVIEW_GATE_REQUIRED_LABVIEW_YEAR }}'
-          if (-not [string]::IsNullOrWhiteSpace($requiredLabviewYearOverride)) {
-            $requiredLabviewYear = $requiredLabviewYearOverride
-          }
-
-          $gateManifestPath = Join-Path $payloadRoot 'workspace-governance\workspace-governance.json'
-          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear) -and (Test-Path -LiteralPath $gateManifestPath -PathType Leaf)) {
-            try {
-              $gateManifest = Get-Content -LiteralPath $gateManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
-              $manifestRequiredYear = [string]$gateManifest.installer_contract.labview_gate.required_year
-              if (-not [string]::IsNullOrWhiteSpace($manifestRequiredYear)) {
-                $requiredLabviewYear = $manifestRequiredYear
-              }
-            } catch {
-              throw "Unable to parse installer contract required year from '$gateManifestPath'. $($_.Exception.Message)"
-            }
-          }
-          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
-            $imageYearMatch = [regex]::Match($labviewImageForGate, '(\d{4})q\d+-windows')
-            if ($imageYearMatch.Success) {
-              $requiredLabviewYear = [string]$imageYearMatch.Groups[1].Value
-            }
-          }
-          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
-            $requiredLabviewYear = '2020'
-          }
           $nsisRoot = '${{ vars.NSIS_ROOT }}'
           if ([string]::IsNullOrWhiteSpace($nsisRoot)) { $nsisRoot = 'C:\Program Files (x86)\NSIS' }
+
           & powershell -NoProfile -ExecutionPolicy RemoteSigned -File "$env:GITHUB_WORKSPACE/scripts/Build-WorkspaceBootstrapInstaller.ps1" `
             -PayloadRoot $payloadRoot `
             -OutputPath $installerPath `
-            -WorkspaceRootDefault 'C:\workspace\gate-dev' `
+            -WorkspaceRootDefault 'C:\workspace\gate-dev-release' `
             -RequiredLabviewYear $requiredLabviewYear `
             -NsisRoot $nsisRoot `
             -Deterministic:$true
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build installer for windows image gate."
+            throw 'Failed to build installer for host release gate.'
           }
 
-      - name: Validate Windows container engine and configure isolation
+      - name: Run host release installer gate
+        shell: powershell
+        timeout-minutes: 120
+        env:
+          RELEASE_REQUIRED_YEAR: ${{ needs.resolve-parity-context.outputs.release_required_year }}
+          SELECTED_PPL_BITNESS: ${{ needs.resolve-parity-context.outputs.selected_ppl_bitness }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate\release'
+          $installerPath = Join-Path $artifactRoot 'lvie-cdev-workspace-installer.exe'
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+            throw "Installer missing for host release gate: $installerPath"
+          }
+
+          $workspaceRoot = 'C:\workspace\gate-dev-release'
+          $workspaceArtifactsRoot = Join-Path $workspaceRoot 'artifacts'
+          $installReportPath = Join-Path $workspaceArtifactsRoot 'workspace-install-latest.json'
+          $launchLogPath = Join-Path $workspaceArtifactsRoot 'workspace-installer-launch.log'
+
+          foreach ($requiredRoot in @(
+            'C:\Program Files\National Instruments\LabVIEW 2020',
+            'C:\Program Files (x86)\National Instruments\LabVIEW 2020',
+            'C:\Program Files\Git',
+            'C:\Program Files\GitHub CLI',
+            'C:\Program Files\G-CLI'
+          )) {
+            if (-not (Test-Path -LiteralPath $requiredRoot -PathType Container)) {
+              throw "Host release gate requires root path: $requiredRoot"
+            }
+          }
+
+          if (Test-Path -LiteralPath $workspaceRoot -PathType Container) {
+            Remove-Item -LiteralPath $workspaceRoot -Recurse -Force
+          }
+          New-Item -Path $workspaceRoot -ItemType Directory -Force | Out-Null
+
+          $env:VIPM_COMMUNITY_EDITION = 'true'
+          $env:LVIE_OFFLINE_GIT_MODE = 'true'
+          $env:LVIE_INSTALLER_EXECUTION_PROFILE = 'host-release'
+          $env:LVIE_GATE_REQUIRED_LABVIEW_YEAR = [string]$env:RELEASE_REQUIRED_YEAR
+          $env:LVIE_GATE_SINGLE_PPL_BITNESS = [string]$env:SELECTED_PPL_BITNESS
+
+          $installerProcess = Start-Process -FilePath $installerPath -ArgumentList '/S' -Wait -PassThru
+
+          if (Test-Path -LiteralPath $launchLogPath -PathType Leaf) {
+            Copy-Item -LiteralPath $launchLogPath -Destination (Join-Path $artifactRoot 'workspace-installer-launch.log') -Force
+          }
+          if (Test-Path -LiteralPath $installReportPath -PathType Leaf) {
+            Copy-Item -LiteralPath $installReportPath -Destination (Join-Path $artifactRoot 'workspace-install-latest.json') -Force
+          }
+
+          if ([int]$installerProcess.ExitCode -ne 0) {
+            throw "Host release installer failed with exit code $([int]$installerProcess.ExitCode)."
+          }
+
+          if (-not (Test-Path -LiteralPath $installReportPath -PathType Leaf)) {
+            throw "Host release installer report missing: $installReportPath"
+          }
+
+          $installReport = Get-Content -LiteralPath $installReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          if ([string]$installReport.status -ne 'succeeded') {
+            throw "Host release installer report status is not succeeded: $([string]$installReport.status)"
+          }
+
+          $selectedPplBitness = [string]$env:SELECTED_PPL_BITNESS
+          if ([string]::IsNullOrWhiteSpace($selectedPplBitness)) { $selectedPplBitness = '64' }
+          if ($selectedPplBitness -notin @('32', '64')) {
+            throw "Invalid selected bitness '$selectedPplBitness'."
+          }
+
+          $selectedPplStatus = [string]$installReport.ppl_capability_checks.$selectedPplBitness.status
+          if ($selectedPplStatus -ne 'pass') {
+            throw "Host release PPL $selectedPplBitness-bit gate did not pass. status=$selectedPplStatus"
+          }
+
+          $vipStatus = [string]$installReport.vip_package_build_check.status
+          $vipPath = [string]$installReport.vip_package_build_check.output_vip_path
+          if ($vipStatus -ne 'pass') {
+            throw "Host release VIP gate did not pass. status=$vipStatus"
+          }
+          if ([string]::IsNullOrWhiteSpace($vipPath) -or -not (Test-Path -LiteralPath $vipPath -PathType Leaf)) {
+            throw "Host release VIP output missing after successful gate: $vipPath"
+          }
+
+          [ordered]@{
+            status = 'pass'
+            gate_lane = 'host-release'
+            selected_ppl_bitness = $selectedPplBitness
+            selected_ppl_status = $selectedPplStatus
+            vip_status = $vipStatus
+            vip_output = $vipPath
+            report_path = $installReportPath
+            execution_profile = [string]$installReport.execution_profile
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $artifactRoot 'windows-host-release-gate-report.json') -Encoding utf8
+
+      - name: Upload host release gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-labview-image-gate-release-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/windows-image-gate/release
+          if-no-files-found: error
+
+  windows-container-parity-gate:
+    name: Windows Container Parity (${{ needs.resolve-parity-context.outputs.lvcontainer_raw }} | b${{ needs.resolve-parity-context.outputs.selected_ppl_bitness }} | ${{ needs.resolve-parity-context.outputs.build_spec_marker }})
+    needs: [resolve-parity-context]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, windows-containers, user-session, cdev-surface-windows-gate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build installer payload for container parity gate
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $labviewImage = '${{ vars.LABVIEW_WINDOWS_IMAGE }}'
-          if ([string]::IsNullOrWhiteSpace($labviewImage)) {
-            $labviewImage = 'nationalinstruments/labview:2026q1-windows'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate\parity'
+          $payloadRoot = Join-Path $gateRoot 'payload'
+          if (Test-Path -LiteralPath $gateRoot -PathType Container) {
+            Remove-Item -LiteralPath $gateRoot -Recurse -Force
           }
+          New-Item -Path $payloadRoot -ItemType Directory -Force | Out-Null
+
+          $payloadContractRoot = Join-Path $env:GITHUB_WORKSPACE 'workspace-governance-payload'
+          if (-not (Test-Path -LiteralPath $payloadContractRoot -PathType Container)) {
+            throw "Canonical payload root not found: $payloadContractRoot"
+          }
+          Copy-Item -Path (Join-Path $payloadContractRoot '*') -Destination $payloadRoot -Recurse -Force
+
+          New-Item -Path (Join-Path $payloadRoot 'scripts') -ItemType Directory -Force | Out-Null
+          New-Item -Path (Join-Path $payloadRoot 'tools\runner-cli\win-x64') -ItemType Directory -Force | Out-Null
+          Copy-Item -Path "$env:GITHUB_WORKSPACE/scripts/Install-WorkspaceFromManifest.ps1" -Destination (Join-Path $payloadRoot 'scripts/Install-WorkspaceFromManifest.ps1') -Force
+
+          & powershell -NoProfile -ExecutionPolicy RemoteSigned -File "$env:GITHUB_WORKSPACE/scripts/Build-RunnerCliBundleFromManifest.ps1" `
+            -ManifestPath (Join-Path $payloadRoot 'workspace-governance/workspace-governance.json') `
+            -OutputRoot (Join-Path $payloadRoot 'tools/runner-cli/win-x64') `
+            -RepoName 'labview-icon-editor' `
+            -Runtime 'win-x64' `
+            -Deterministic:$true
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to build runner-cli bundle for container parity gate.'
+          }
+
+          $requiredLabviewYear = '${{ needs.resolve-parity-context.outputs.lvcontainer_year }}'
+          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
+            throw 'Resolved container parity LabVIEW year is empty.'
+          }
+
+          $installerPath = Join-Path $gateRoot 'lvie-cdev-workspace-installer.exe'
+          $nsisRoot = '${{ vars.NSIS_ROOT }}'
+          if ([string]::IsNullOrWhiteSpace($nsisRoot)) { $nsisRoot = 'C:\Program Files (x86)\NSIS' }
+
+          & powershell -NoProfile -ExecutionPolicy RemoteSigned -File "$env:GITHUB_WORKSPACE/scripts/Build-WorkspaceBootstrapInstaller.ps1" `
+            -PayloadRoot $payloadRoot `
+            -OutputPath $installerPath `
+            -WorkspaceRootDefault 'C:\workspace\gate-dev-parity' `
+            -RequiredLabviewYear $requiredLabviewYear `
+            -NsisRoot $nsisRoot `
+            -Deterministic:$true
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to build installer for container parity gate.'
+          }
+
+      - name: Validate Windows container engine and configure parity image/isolation
+        shell: powershell
+        env:
+          DERIVED_WINDOWS_IMAGE: ${{ needs.resolve-parity-context.outputs.lvcontainer_windows_image }}
+          DERIVED_WINDOWS_TAG: ${{ needs.resolve-parity-context.outputs.lvcontainer_windows_tag }}
+          DERIVED_LVCONTAINER_RAW: ${{ needs.resolve-parity-context.outputs.lvcontainer_raw }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $derivedImage = [string]$env:DERIVED_WINDOWS_IMAGE
+          $derivedTag = [string]$env:DERIVED_WINDOWS_TAG
+          $lvcontainerRaw = [string]$env:DERIVED_LVCONTAINER_RAW
+
+          if ([string]::IsNullOrWhiteSpace($derivedImage) -or [string]::IsNullOrWhiteSpace($derivedTag)) {
+            throw 'Resolved parity image/tag is empty.'
+          }
+
+          $overrideImage = '${{ vars.LABVIEW_WINDOWS_IMAGE }}'
+          if (-not [string]::IsNullOrWhiteSpace($overrideImage) -and ($overrideImage -ne $derivedImage)) {
+            throw "LABVIEW_WINDOWS_IMAGE override '$overrideImage' does not match .lvcontainer-derived image '$derivedImage' (raw=$lvcontainerRaw)."
+          }
+          $labviewImage = if ([string]::IsNullOrWhiteSpace($overrideImage)) { $derivedImage } else { $overrideImage }
+
           $requestedIsolation = '${{ vars.LABVIEW_WINDOWS_DOCKER_ISOLATION }}'
           if ([string]::IsNullOrWhiteSpace($requestedIsolation)) {
             $requestedIsolation = 'auto'
@@ -166,7 +447,7 @@ jobs:
             Write-Host "::warning::Windows container compatibility mismatch detected. Falling back to Hyper-V isolation for image '$labviewImage'. Host='$hostKernelVersion' Image='$imageOsVersion'."
           } elseif ($requestedIsolation -eq 'hyperv') {
             $effectiveIsolation = 'hyperv'
-            Write-Host "::notice::LABVIEW_WINDOWS_DOCKER_ISOLATION requests Hyper-V isolation for compatible host/image versions."
+            Write-Host '::notice::LABVIEW_WINDOWS_DOCKER_ISOLATION requests Hyper-V isolation for compatible host/image versions.'
           }
 
           if ($effectiveIsolation -eq 'process') {
@@ -180,15 +461,23 @@ jobs:
 
           "LABVIEW_WINDOWS_IMAGE=$labviewImage" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "LABVIEW_WINDOWS_DOCKER_ISOLATION=$effectiveIsolation" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LVIE_PARITY_LVCONTAINER_RAW=$lvcontainerRaw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LVIE_PARITY_WINDOWS_TAG=$derivedTag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Run installer and runner-cli gate in Windows container
+      - name: Run installer + project-spec parity + VI analyzer in Windows container
         shell: powershell
+        timeout-minutes: 150
+        env:
+          PARITY_REQUIRED_YEAR: ${{ needs.resolve-parity-context.outputs.lvcontainer_year }}
+          SELECTED_PPL_BITNESS: ${{ needs.resolve-parity-context.outputs.selected_ppl_bitness }}
+          PARITY_BUILD_SPEC_MARKER: ${{ needs.resolve-parity-context.outputs.build_spec_marker }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate'
-          $installerPath = Join-Path $gateRoot 'lvie-cdev-workspace-installer.exe'
+
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate\parity'
+          $installerPath = Join-Path $artifactRoot 'lvie-cdev-workspace-installer.exe'
           if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
-            throw "Installer missing for gate: $installerPath"
+            throw "Installer missing for parity gate: $installerPath"
           }
 
           $containerCmd = @'
@@ -200,13 +489,19 @@ jobs:
             'C:\host-tools\G-CLI\bin',
             $env:Path
           ) -join ';'
+
           $env:VIPM_COMMUNITY_EDITION = 'true'
-          $env:LVIE_OFFLINE_GIT_MODE = [string]$env:LVIE_OFFLINE_GIT_MODE
-          $env:LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD = [string]$env:LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD
+          $env:LVIE_OFFLINE_GIT_MODE = 'true'
+          $env:LVIE_INSTALLER_EXECUTION_PROFILE = 'container-parity'
           $env:LVIE_GATE_REQUIRED_LABVIEW_YEAR = [string]$env:LVIE_GATE_REQUIRED_LABVIEW_YEAR
           $env:LVIE_GATE_SINGLE_PPL_BITNESS = [string]$env:LVIE_GATE_SINGLE_PPL_BITNESS
+          $env:LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD = [string]$env:LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD
+          $env:LVIE_PARITY_LVCONTAINER_RAW = [string]$env:LVIE_PARITY_LVCONTAINER_RAW
+          $env:LVIE_PARITY_WINDOWS_TAG = [string]$env:LVIE_PARITY_WINDOWS_TAG
+          $env:LVIE_PARITY_BUILD_SPEC_KIND = 'ppl'
+          $env:LVIE_PARITY_BUILD_SPEC_PLACEHOLDER = 'srcdist'
 
-          $requiredCommands = @('powershell', 'git', 'gh')
+          $requiredCommands = @('powershell', 'git', 'gh', 'g-cli')
           $missingCommands = @()
           foreach ($name in $requiredCommands) {
             if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -217,38 +512,29 @@ jobs:
             throw "Container runtime missing required commands after host-tool mount: $($missingCommands -join ', ')"
           }
 
-          $installerProcess = Start-Process `
-            -FilePath "C:\workspace\artifacts\windows-image-gate\lvie-cdev-workspace-installer.exe" `
-            -ArgumentList '/S' `
-            -Wait `
-            -PassThru
-          $launchLogPath = "C:\workspace\gate-dev\artifacts\workspace-installer-launch.log"
+          $installerProcess = Start-Process -FilePath "C:\workspace\artifacts\windows-image-gate\parity\lvie-cdev-workspace-installer.exe" -ArgumentList '/S' -Wait -PassThru
+
+          $workspaceRoot = 'C:\workspace\gate-dev-parity'
+          $workspaceArtifactsRoot = Join-Path $workspaceRoot 'artifacts'
+          $launchLogPath = Join-Path $workspaceArtifactsRoot 'workspace-installer-launch.log'
+          $installReportPath = Join-Path $workspaceArtifactsRoot 'workspace-install-latest.json'
+
           if (Test-Path -LiteralPath $launchLogPath -PathType Leaf) {
-            Copy-Item -LiteralPath $launchLogPath -Destination "C:\workspace\artifacts\windows-image-gate\workspace-installer-launch.log" -Force
+            Copy-Item -LiteralPath $launchLogPath -Destination "C:\workspace\artifacts\windows-image-gate\parity\workspace-installer-launch.log" -Force
           }
-          $installReportPath = "C:\workspace\gate-dev\artifacts\workspace-install-latest.json"
-          $installReportArtifactPath = "C:\workspace\artifacts\windows-image-gate\workspace-install-latest.json"
-          $installReport = $null
           if (Test-Path -LiteralPath $installReportPath -PathType Leaf) {
-            Copy-Item -LiteralPath $installReportPath -Destination $installReportArtifactPath -Force
-            try {
-              $installReport = Get-Content -LiteralPath $installReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
-              Write-Host "installer_report_status=$([string]$installReport.status)"
-            } catch {
-              Write-Warning "Failed to parse installer report for diagnostic output: $($_.Exception.Message)"
-            }
-          }
-          if ([int]$installerProcess.ExitCode -ne 0) {
-            throw "Installer failed with exit code $([int]$installerProcess.ExitCode)"
+            Copy-Item -LiteralPath $installReportPath -Destination "C:\workspace\artifacts\windows-image-gate\parity\workspace-install-latest.json" -Force
           }
 
+          if ([int]$installerProcess.ExitCode -ne 0) {
+            throw "Installer failed with exit code $([int]$installerProcess.ExitCode)."
+          }
           if (-not (Test-Path -LiteralPath $installReportPath -PathType Leaf)) {
             throw "Installer report missing: $installReportPath"
           }
-          if ($null -eq $installReport) {
-            $installReport = Get-Content -LiteralPath $installReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
-          }
-          if ([string]$installReport.status -ne "succeeded") {
+
+          $installReport = Get-Content -LiteralPath $installReportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          if ([string]$installReport.status -ne 'succeeded') {
             throw "Installer report status is not succeeded: $([string]$installReport.status)"
           }
 
@@ -260,82 +546,86 @@ jobs:
             throw "Invalid LVIE_GATE_SINGLE_PPL_BITNESS value '$selectedPplBitness'. Expected '32' or '64'."
           }
 
-          $ppl32 = [string]$installReport.ppl_capability_checks.'32'.status
-          $ppl64 = [string]$installReport.ppl_capability_checks.'64'.status
-          $pplStatusByBitness = @{
-            '32' = $ppl32
-            '64' = $ppl64
-          }
-          $selectedPplStatus = [string]$pplStatusByBitness[$selectedPplBitness]
-          if ($selectedPplStatus -ne "pass") {
-            throw "PPL $selectedPplBitness-bit gate did not pass. status=$selectedPplStatus"
+          $selectedPplStatus = [string]$installReport.ppl_capability_checks.$selectedPplBitness.status
+          if ($selectedPplStatus -ne 'pass') {
+            throw "PPL $selectedPplBitness-bit parity gate did not pass. status=$selectedPplStatus"
           }
 
           $vipStatus = [string]$installReport.vip_package_build_check.status
-          $vipPath = [string]$installReport.vip_package_build_check.output_vip_path
-          if ($vipStatus -ne "pass") { throw "VIP gate did not pass. status=$vipStatus" }
-          if ([string]::IsNullOrWhiteSpace($vipPath) -or -not (Test-Path -LiteralPath $vipPath -PathType Leaf)) {
-            throw "VIP output missing after successful gate: $vipPath"
+          if ($vipStatus -ne 'skipped') {
+            throw "Container parity profile must skip VIP build. observed_status=$vipStatus"
           }
 
+          $iconEditorRoot = 'C:\dev\labview-icon-editor'
+          $viAnalyzerScript = Join-Path $iconEditorRoot 'Tooling\container-parity\run-vi-analyzer-windows.ps1'
+          if (-not (Test-Path -LiteralPath $viAnalyzerScript -PathType Leaf)) {
+            throw "Container parity VI Analyzer script missing: $viAnalyzerScript"
+          }
+
+          $viAnalyzerStatusPath = 'builds\status\vi-analyzer-summary.parity.windows.gate.json'
+          $viAnalyzerReportsRoot = 'builds\vi-analyzer\windows-container-gate'
+          & powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $viAnalyzerScript `
+            -WorkspaceRoot $iconEditorRoot `
+            -LabVIEWVersion ([string]$env:LVIE_GATE_REQUIRED_LABVIEW_YEAR) `
+            -LabVIEWBitness $selectedPplBitness `
+            -ReportsRoot $viAnalyzerReportsRoot `
+            -StatusPath $viAnalyzerStatusPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Container parity VI Analyzer failed with exit code $LASTEXITCODE."
+          }
+
+          $resolvedViAnalyzerStatusPath = Join-Path $iconEditorRoot $viAnalyzerStatusPath
+          if (-not (Test-Path -LiteralPath $resolvedViAnalyzerStatusPath -PathType Leaf)) {
+            throw "Container parity VI Analyzer status file missing: $resolvedViAnalyzerStatusPath"
+          }
+          Copy-Item -LiteralPath $resolvedViAnalyzerStatusPath -Destination "C:\workspace\artifacts\windows-image-gate\parity\vi-analyzer-summary.parity.windows.gate.json" -Force
+
           [ordered]@{
-            status = "pass"
-            install_report = $installReportPath
+            status = 'pass'
+            gate_lane = 'container-parity'
+            lvcontainer_raw = [string]$env:LVIE_PARITY_LVCONTAINER_RAW
+            lvcontainer_windows_tag = [string]$env:LVIE_PARITY_WINDOWS_TAG
             selected_ppl_bitness = $selectedPplBitness
             selected_ppl_status = $selectedPplStatus
-            ppl_32_status = $ppl32
-            ppl_64_status = $ppl64
             vip_status = $vipStatus
-            vip_output = $vipPath
-            timestamp_utc = (Get-Date).ToUniversalTime().ToString("o")
-          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "C:\workspace\artifacts\windows-image-gate\windows-image-gate-report.json" -Encoding utf8
+            vi_analyzer_status_path = $resolvedViAnalyzerStatusPath
+            build_spec_marker = [string]$env:PARITY_BUILD_SPEC_MARKER
+            install_report_path = $installReportPath
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath "C:\workspace\artifacts\windows-image-gate\parity\windows-container-parity-gate-report.json" -Encoding utf8
           '@
 
           $labviewImage = [string]$env:LABVIEW_WINDOWS_IMAGE
           if ([string]::IsNullOrWhiteSpace($labviewImage)) {
-            $labviewImage = 'nationalinstruments/labview:2026q1-windows'
+            throw 'LABVIEW_WINDOWS_IMAGE is not set for parity gate.'
           }
+
           $dockerIsolation = [string]$env:LABVIEW_WINDOWS_DOCKER_ISOLATION
           if ([string]::IsNullOrWhiteSpace($dockerIsolation)) {
             $dockerIsolation = 'process'
           }
-          $gateRequiredLabviewYear = '${{ vars.LABVIEW_GATE_REQUIRED_LABVIEW_YEAR }}'
-          $gateManifestPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate\payload\workspace-governance\workspace-governance.json'
-          if ([string]::IsNullOrWhiteSpace($gateRequiredLabviewYear) -and (Test-Path -LiteralPath $gateManifestPath -PathType Leaf)) {
-            try {
-              $gateManifest = Get-Content -LiteralPath $gateManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
-              $manifestRequiredYear = [string]$gateManifest.installer_contract.labview_gate.required_year
-              if (-not [string]::IsNullOrWhiteSpace($manifestRequiredYear)) {
-                $gateRequiredLabviewYear = $manifestRequiredYear
-              }
-            } catch {
-              throw "Unable to parse installer contract required year from '$gateManifestPath'. $($_.Exception.Message)"
-            }
+
+          $requiredYear = [string]$env:PARITY_REQUIRED_YEAR
+          if ([string]::IsNullOrWhiteSpace($requiredYear)) {
+            throw 'PARITY_REQUIRED_YEAR is empty.'
           }
-          if ([string]::IsNullOrWhiteSpace($gateRequiredLabviewYear)) {
-            $imageYearMatch = [regex]::Match($labviewImage, '(\d{4})q\d+-windows')
-            if ($imageYearMatch.Success) {
-              $gateRequiredLabviewYear = [string]$imageYearMatch.Groups[1].Value
-            }
-          }
-          if ([string]::IsNullOrWhiteSpace($gateRequiredLabviewYear)) {
-            $gateRequiredLabviewYear = '2020'
-          }
-          $singlePplBitness = '${{ vars.LABVIEW_GATE_SINGLE_PPL_BITNESS }}'
+
+          $singlePplBitness = [string]$env:SELECTED_PPL_BITNESS
           if ([string]::IsNullOrWhiteSpace($singlePplBitness)) {
             $singlePplBitness = '64'
           }
+
           $labviewX86NipkgInstallCmd = '${{ vars.LABVIEW_X86_NIPKG_INSTALL_CMD }}'
           if ([string]::IsNullOrWhiteSpace($labviewX86NipkgInstallCmd)) {
             $nipkgExe = '"C:\Program Files\National Instruments\NI Package Manager\nipkg.exe"'
-            if ($gateRequiredLabviewYear -eq '2026') {
+            if ($requiredYear -eq '2026') {
               $labviewX86NipkgInstallCmd = @(
                 "$nipkgExe feed-add https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26.1/released --name=ni-labview-2026-core-x86-en-2026-q1-released",
                 "$nipkgExe feed-add https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26.1/released-critical --name=ni-labview-2026-core-x86-en-2026-q1-released-critical",
                 "$nipkgExe update",
                 "$nipkgExe install --accept-eulas --yes --include-recommended ni-labview-2026-core-x86-en"
               ) -join ' && '
-            } elseif ($gateRequiredLabviewYear -eq '2020') {
+            } elseif ($requiredYear -eq '2020') {
               $labviewX86NipkgInstallCmd = @(
                 "$nipkgExe feed-add https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20.0/released --name=ni-labview-2020-core-x86-en-2020-released",
                 "$nipkgExe feed-add https://download.ni.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20.0/released-critical --name=ni-labview-2020-core-x86-en-2020-released-critical",
@@ -359,57 +649,128 @@ jobs:
             }
           }
 
-          docker run --rm `
-            --isolation=$dockerIsolation `
-            --env "VIPM_COMMUNITY_EDITION=true" `
-            --env "LVIE_OFFLINE_GIT_MODE=true" `
-            --env "LVIE_GATE_REQUIRED_LABVIEW_YEAR=$gateRequiredLabviewYear" `
-            --env "LVIE_GATE_SINGLE_PPL_BITNESS=$singlePplBitness" `
-            --env "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=$labviewX86NipkgInstallCmd" `
-            --mount "type=bind,source=${env:GITHUB_WORKSPACE},target=C:\workspace" `
-            --mount "type=bind,source=$hostDevRoot,target=C:\dev" `
-            --mount "type=bind,source=$hostLabview2020x64Root,target=C:\Program Files\National Instruments\LabVIEW 2020,readonly" `
-            --mount "type=bind,source=$hostLabview2020x86Root,target=C:\Program Files (x86)\National Instruments\LabVIEW 2020,readonly" `
-            --mount "type=bind,source=$hostGitRoot,target=C:\host-tools\Git,readonly" `
-            --mount "type=bind,source=$hostGhRoot,target=C:\host-tools\GitHubCLI,readonly" `
-            --mount "type=bind,source=$hostGCliRoot,target=C:\host-tools\G-CLI,readonly" `
-            $labviewImage `
-            powershell -NoProfile -Command $containerCmd
-          if ($LASTEXITCODE -ne 0) {
-            throw "Windows image gate failed."
-          }
+          $containerName = "lvie-gate-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $containerName = $containerName.ToLowerInvariant()
+          $dockerArgs = @(
+            'run',
+            '--name', $containerName,
+            "--isolation=$dockerIsolation",
+            '--env', 'VIPM_COMMUNITY_EDITION=true',
+            '--env', 'LVIE_OFFLINE_GIT_MODE=true',
+            '--env', "LVIE_GATE_REQUIRED_LABVIEW_YEAR=$requiredYear",
+            '--env', "LVIE_GATE_SINGLE_PPL_BITNESS=$singlePplBitness",
+            '--env', "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=$labviewX86NipkgInstallCmd",
+            '--env', "LVIE_PARITY_LVCONTAINER_RAW=$env:LVIE_PARITY_LVCONTAINER_RAW",
+            '--env', "LVIE_PARITY_WINDOWS_TAG=$env:LVIE_PARITY_WINDOWS_TAG",
+            '--env', "PARITY_BUILD_SPEC_MARKER=$env:PARITY_BUILD_SPEC_MARKER",
+            '--mount', "type=bind,source=${env:GITHUB_WORKSPACE},target=C:\workspace",
+            '--mount', "type=bind,source=$hostDevRoot,target=C:\dev",
+            '--mount', "type=bind,source=$hostLabview2020x64Root,target=C:\Program Files\National Instruments\LabVIEW 2020,readonly",
+            '--mount', "type=bind,source=$hostLabview2020x86Root,target=C:\Program Files (x86)\National Instruments\LabVIEW 2020,readonly",
+            '--mount', "type=bind,source=$hostGitRoot,target=C:\host-tools\Git,readonly",
+            '--mount', "type=bind,source=$hostGhRoot,target=C:\host-tools\GitHubCLI,readonly",
+            '--mount', "type=bind,source=$hostGCliRoot,target=C:\host-tools\G-CLI,readonly",
+            $labviewImage,
+            'powershell', '-NoProfile', '-Command', $containerCmd
+          )
 
-      - name: Capture gate metadata
-        id: capture-gate-metadata
-        if: always()
-        shell: powershell
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $reportPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate\windows-image-gate-report.json'
-          $artifactName = "windows-labview-image-gate-$env:GITHUB_RUN_ID"
-          $status = if ($env:JOB_STATUS -eq 'success') { 'pass' } else { 'fail' }
+          $dockerExitCode = 0
+          try {
+            & docker @dockerArgs
+            $dockerExitCode = $LASTEXITCODE
 
-          if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
-            try {
-              $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json -ErrorAction Stop
-              if ([string]$report.status -eq 'pass') {
-                $status = 'pass'
+            if ($dockerExitCode -ne 0) {
+              Write-Warning "Container parity gate failed. Collecting host fallback diagnostics."
+
+              $containerLogsPath = Join-Path $artifactRoot 'container-console.log'
+              try {
+                $containerLogs = & docker logs $containerName 2>&1
+                if ($null -ne $containerLogs) {
+                  $containerLogs | Set-Content -LiteralPath $containerLogsPath -Encoding utf8
+                }
+              } catch {
+                Write-Warning "Failed to collect docker logs for container '$containerName'. $($_.Exception.Message)"
               }
-            } catch {
-              # Keep status from job conclusion.
+
+              $fallbackDiagnostics = [ordered]@{
+                status = 'fail'
+                reason = 'container_boot_failure'
+                docker_exit_code = $dockerExitCode
+                docker_isolation = $dockerIsolation
+                docker_image = $labviewImage
+                lvcontainer_raw = [string]$env:LVIE_PARITY_LVCONTAINER_RAW
+                lvcontainer_windows_tag = [string]$env:LVIE_PARITY_WINDOWS_TAG
+                selected_ppl_bitness = $singlePplBitness
+                timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+                host_probe = [ordered]@{
+                  host_dev_root_exists = (Test-Path -LiteralPath $hostDevRoot -PathType Container)
+                  host_labview_2020_x64_exists = (Test-Path -LiteralPath $hostLabview2020x64Root -PathType Container)
+                  host_labview_2020_x86_exists = (Test-Path -LiteralPath $hostLabview2020x86Root -PathType Container)
+                  host_git_exists = (Test-Path -LiteralPath $hostGitRoot -PathType Container)
+                  host_gh_exists = (Test-Path -LiteralPath $hostGhRoot -PathType Container)
+                  host_gcli_exists = (Test-Path -LiteralPath $hostGCliRoot -PathType Container)
+                }
+              }
+
+              try {
+                $fallbackDiagnostics.docker_version = (& docker version 2>&1 | Out-String).Trim()
+              } catch {
+                $fallbackDiagnostics.docker_version = "failed: $($_.Exception.Message)"
+              }
+
+              $fallbackPath = Join-Path $artifactRoot 'container-fallback-diagnostics.json'
+              $fallbackDiagnostics | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $fallbackPath -Encoding utf8
+
+              throw "Windows container parity gate failed with exit code $dockerExitCode."
             }
+          } finally {
+            & docker rm -f $containerName *> $null
           }
 
-          "gate_status=$status" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "gate_report_artifact_name=$artifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "gate_report_path=$reportPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
-      - name: Upload windows image gate artifacts
+      - name: Upload container parity gate artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-labview-image-gate-${{ github.run_id }}
-          path: ${{ github.workspace }}/artifacts/windows-image-gate
+          name: windows-labview-image-gate-parity-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/windows-image-gate/parity
           if-no-files-found: error
+
+  gate-summary:
+    name: Windows Gate Summary
+    if: always()
+    needs: [windows-host-release-gate, windows-container-parity-gate]
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.evaluate.outputs.gate_status }}
+      gate_report_artifact_name: ${{ steps.evaluate.outputs.gate_report_artifact_name }}
+      gate_report_path: ${{ steps.evaluate.outputs.gate_report_path }}
+    steps:
+      - id: evaluate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          host_result='${{ needs.windows-host-release-gate.result }}'
+          parity_result='${{ needs.windows-container-parity-gate.result }}'
+
+          gate_status='fail'
+          if [[ "$host_result" == 'success' && "$parity_result" == 'success' ]]; then
+            gate_status='pass'
+          fi
+
+          echo "gate_status=$gate_status" >> "$GITHUB_OUTPUT"
+          echo "gate_report_artifact_name=windows-labview-image-gate-parity-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "gate_report_path=${GITHUB_WORKSPACE}/artifacts/windows-image-gate/parity/windows-container-parity-gate-report.json" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Windows Gate Summary"
+            echo ""
+            echo "- Host release gate: $host_result"
+            echo "- Container parity gate: $parity_result"
+            echo "- Overall status: $gate_status"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$gate_status" != 'pass' ]]; then
+            echo "One or more hard gate lanes failed." >&2
+            exit 1
+          fi
