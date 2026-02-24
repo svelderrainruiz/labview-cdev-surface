@@ -282,9 +282,9 @@ jobs:
               if (-not (Test-Path -LiteralPath $repoParent -PathType Container)) {
                 New-Item -Path $repoParent -ItemType Directory -Force | Out-Null
               }
-              $cloneOutput = & git clone $repoOriginUrl $repoPath 2>&1
+              & git clone --quiet $repoOriginUrl $repoPath
               if ($LASTEXITCODE -ne 0) {
-                throw "Failed to clone managed repository '$repoName' ($repoPath). $([string]::Join("`n", @($cloneOutput)))"
+                throw "Failed to clone managed repository '$repoName' ($repoPath)."
               }
             }
 
@@ -293,20 +293,20 @@ jobs:
             }
 
             if (-not [string]::IsNullOrWhiteSpace($repoDefaultBranch)) {
-              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoDefaultBranch 2>&1
+              & git -C $repoPath fetch --no-tags --quiet origin $repoDefaultBranch
               if ($LASTEXITCODE -ne 0) {
-                throw "Failed to fetch origin/$repoDefaultBranch for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+                throw "Failed to fetch origin/$repoDefaultBranch for managed repository '$repoName'."
               }
             } else {
-              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoPinnedSha 2>&1
+              & git -C $repoPath fetch --no-tags --quiet origin $repoPinnedSha
               if ($LASTEXITCODE -ne 0) {
-                throw "Failed to fetch pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+                throw "Failed to fetch pinned SHA '$repoPinnedSha' for managed repository '$repoName'."
               }
             }
 
-            $checkoutOutput = & git -C $repoPath checkout --detach $repoPinnedSha 2>&1
+            & git -C $repoPath checkout --quiet --detach $repoPinnedSha
             if ($LASTEXITCODE -ne 0) {
-              throw "Failed to checkout pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($checkoutOutput)))"
+              throw "Failed to checkout pinned SHA '$repoPinnedSha' for managed repository '$repoName'."
             }
           }
 
@@ -778,9 +778,9 @@ jobs:
               if (-not (Test-Path -LiteralPath $repoParent -PathType Container)) {
                 New-Item -Path $repoParent -ItemType Directory -Force | Out-Null
               }
-              $cloneOutput = & git clone $repoOriginUrl $repoPath 2>&1
+              & git clone --quiet $repoOriginUrl $repoPath
               if ($LASTEXITCODE -ne 0) {
-                throw "Failed to clone managed repository '$repoName' ($repoPath). $([string]::Join("`n", @($cloneOutput)))"
+                throw "Failed to clone managed repository '$repoName' ($repoPath)."
               }
             }
 
@@ -789,20 +789,20 @@ jobs:
             }
 
             if (-not [string]::IsNullOrWhiteSpace($repoDefaultBranch)) {
-              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoDefaultBranch 2>&1
+              & git -C $repoPath fetch --no-tags --quiet origin $repoDefaultBranch
               if ($LASTEXITCODE -ne 0) {
-                throw "Failed to fetch origin/$repoDefaultBranch for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+                throw "Failed to fetch origin/$repoDefaultBranch for managed repository '$repoName'."
               }
             } else {
-              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoPinnedSha 2>&1
+              & git -C $repoPath fetch --no-tags --quiet origin $repoPinnedSha
               if ($LASTEXITCODE -ne 0) {
-                throw "Failed to fetch pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+                throw "Failed to fetch pinned SHA '$repoPinnedSha' for managed repository '$repoName'."
               }
             }
 
-            $checkoutOutput = & git -C $repoPath checkout --detach $repoPinnedSha 2>&1
+            & git -C $repoPath checkout --quiet --detach $repoPinnedSha
             if ($LASTEXITCODE -ne 0) {
-              throw "Failed to checkout pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($checkoutOutput)))"
+              throw "Failed to checkout pinned SHA '$repoPinnedSha' for managed repository '$repoName'."
             }
           }
 
