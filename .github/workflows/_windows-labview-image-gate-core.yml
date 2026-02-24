@@ -60,12 +60,26 @@ jobs:
           }
 
           $installerPath = Join-Path $gateRoot 'lvie-cdev-workspace-installer.exe'
+          $requiredLabviewYear = '2020'
+          $gateManifestPath = Join-Path $payloadRoot 'workspace-governance\workspace-governance.json'
+          if (Test-Path -LiteralPath $gateManifestPath -PathType Leaf) {
+            try {
+              $gateManifest = Get-Content -LiteralPath $gateManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+              $manifestRequiredYear = [string]$gateManifest.installer_contract.labview_gate.required_year
+              if (-not [string]::IsNullOrWhiteSpace($manifestRequiredYear)) {
+                $requiredLabviewYear = $manifestRequiredYear
+              }
+            } catch {
+              throw "Unable to parse installer contract required year from '$gateManifestPath'. $($_.Exception.Message)"
+            }
+          }
           $nsisRoot = '${{ vars.NSIS_ROOT }}'
           if ([string]::IsNullOrWhiteSpace($nsisRoot)) { $nsisRoot = 'C:\Program Files (x86)\NSIS' }
           & pwsh -NoProfile -File "$env:GITHUB_WORKSPACE/scripts/Build-WorkspaceBootstrapInstaller.ps1" `
             -PayloadRoot $payloadRoot `
             -OutputPath $installerPath `
             -WorkspaceRootDefault 'C:\dev' `
+            -RequiredLabviewYear $requiredLabviewYear `
             -NsisRoot $nsisRoot `
             -Deterministic:$true
           if ($LASTEXITCODE -ne 0) {
@@ -168,6 +182,8 @@ jobs:
             'C:\host-tools\G-CLI\bin',
             $env:Path
           ) -join ';'
+          $env:VIPM_COMMUNITY_EDITION = 'true'
+          $env:LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD = [string]$env:LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD
 
           $requiredCommands = @('powershell', 'pwsh', 'git', 'gh')
           $missingCommands = @()
@@ -229,6 +245,10 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($dockerIsolation)) {
             $dockerIsolation = 'process'
           }
+          $labviewX86NipkgInstallCmd = '${{ vars.LABVIEW_X86_NIPKG_INSTALL_CMD }}'
+          if ([string]::IsNullOrWhiteSpace($labviewX86NipkgInstallCmd)) {
+            $labviewX86NipkgInstallCmd = ''
+          }
 
           $hostPwshRoot = 'C:\Program Files\PowerShell\7'
           $hostGitRoot = 'C:\Program Files\Git'
@@ -242,6 +262,8 @@ jobs:
 
           docker run --rm `
             --isolation=$dockerIsolation `
+            --env "VIPM_COMMUNITY_EDITION=true" `
+            --env "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=$labviewX86NipkgInstallCmd" `
             --mount "type=bind,source=${env:GITHUB_WORKSPACE},target=C:\workspace" `
             --mount "type=bind,source=$hostPwshRoot,target=C:\host-tools\PowerShell7,readonly" `
             --mount "type=bind,source=$hostGitRoot,target=C:\host-tools\Git,readonly" `

@@ -35,6 +35,14 @@ Name "LVIE Cdev Workspace Bootstrap"
   !define LAUNCH_LOG_REL "artifacts\workspace-installer-launch.log"
 !endif
 
+!ifndef REQUIRED_LABVIEW_YEAR
+  !define REQUIRED_LABVIEW_YEAR "2020"
+!endif
+
+!ifndef X86_NIPKG_ENV
+  !define X86_NIPKG_ENV "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD"
+!endif
+
 OutFile "${OUT_FILE}"
 InstallDir "$TEMP\lvie-cdev-workspace-installer"
 Page instfiles
@@ -61,7 +69,42 @@ Section "Install"
   FileWrite $2 "manifest=$INSTDIR\${MANIFEST_REL}$\r$\n"
   FileWrite $2 "report=${WORKSPACE_ROOT}\${REPORT_REL}$\r$\n"
   FileWrite $2 "powershell_exe=$1$\r$\n"
+  FileWrite $2 "required_labview_year=${REQUIRED_LABVIEW_YEAR}$\r$\n"
   FileClose $2
+
+  StrCpy $3 "C:\Program Files\National Instruments\LabVIEW ${REQUIRED_LABVIEW_YEAR}\LabVIEW.exe"
+  StrCpy $4 "C:\Program Files (x86)\National Instruments\LabVIEW ${REQUIRED_LABVIEW_YEAR}\LabVIEW.exe"
+  FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
+  FileWrite $2 "required_labview_x64_exe=$3$\r$\n"
+  FileWrite $2 "required_labview_x86_exe=$4$\r$\n"
+  FileClose $2
+
+  IfFileExists "$4" labview_x86_ready 0
+  ReadEnvStr $5 "${X86_NIPKG_ENV}"
+  FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
+  FileWrite $2 "missing_labview_x86=true$\r$\n"
+  FileWrite $2 "x86_nipkg_env=${X86_NIPKG_ENV}$\r$\n"
+  FileWrite $2 "x86_nipkg_cmd=$5$\r$\n"
+  FileClose $2
+  ${If} $5 == ""
+    FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
+    FileWrite $2 "x86_nipkg_status=missing_command$\r$\n"
+    FileClose $2
+    SetErrorLevel 193
+    Abort
+  ${EndIf}
+  ExecWait '"$SYSDIR\cmd.exe" /c "$5 >> "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" 2>&1"' $0
+  FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
+  FileWrite $2 "x86_nipkg_exit_code=$0$\r$\n"
+  FileClose $2
+  ${If} $0 != 0
+    SetErrorLevel $0
+    Abort
+  ${EndIf}
+  IfFileExists "$4" labview_x86_ready 0
+  SetErrorLevel 194
+  Abort
+  labview_x86_ready:
 
   ExecWait '"$SYSDIR\cmd.exe" /c ""$1" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\${INSTALL_SCRIPT_REL}" -WorkspaceRoot "${WORKSPACE_ROOT}" -ManifestPath "$INSTDIR\${MANIFEST_REL}" -Mode Install -InstallerExecutionContext NsisInstall -OutputPath "${WORKSPACE_ROOT}\${REPORT_REL}" >> "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" 2>&1"' $0
   FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
