@@ -558,6 +558,12 @@ jobs:
           RELEASE_REQUIRED_YEAR: ${{ needs.resolve-parity-context.outputs.release_required_year }}
           SELECTED_PPL_BITNESS: ${{ needs.resolve-parity-context.outputs.selected_ppl_bitness }}
           PARITY_BUILD_SPEC_MARKER: ${{ needs.resolve-parity-context.outputs.build_spec_marker }}
+          PARITY_CONTAINER_TIMEOUT_MINUTES: ${{ vars.LVIE_PARITY_CONTAINER_SCRIPT_TIMEOUT_MINUTES }}
+          PARITY_INSTALLER_TIMEOUT_MINUTES: ${{ vars.LVIE_PARITY_INSTALLER_TIMEOUT_MINUTES }}
+          PARITY_VI_ANALYZER_TIMEOUT_MINUTES: ${{ vars.LVIE_PARITY_VI_ANALYZER_TIMEOUT_MINUTES }}
+          PARITY_POSTPHASE_COPY_TIMEOUT_SECONDS: ${{ vars.LVIE_PARITY_POSTPHASE_COPY_TIMEOUT_SECONDS }}
+          PARITY_LABVIEW_X86_NIPKG_INSTALL_CMD: ${{ vars.LABVIEW_X86_NIPKG_INSTALL_CMD }}
+          PARITY_DOCKER_DNS: ${{ vars.LABVIEW_WINDOWS_DOCKER_DNS }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -838,16 +844,16 @@ jobs:
           $installerTimeoutMinutes = 90
           $viAnalyzerTimeoutMinutes = 45
           $postphaseCopyTimeoutSeconds = 300
-          [int]::TryParse('${{ vars.LVIE_PARITY_CONTAINER_SCRIPT_TIMEOUT_MINUTES }}', [ref]$containerScriptTimeoutMinutes) | Out-Null
-          [int]::TryParse('${{ vars.LVIE_PARITY_INSTALLER_TIMEOUT_MINUTES }}', [ref]$installerTimeoutMinutes) | Out-Null
-          [int]::TryParse('${{ vars.LVIE_PARITY_VI_ANALYZER_TIMEOUT_MINUTES }}', [ref]$viAnalyzerTimeoutMinutes) | Out-Null
-          [int]::TryParse('${{ vars.LVIE_PARITY_POSTPHASE_COPY_TIMEOUT_SECONDS }}', [ref]$postphaseCopyTimeoutSeconds) | Out-Null
+          [int]::TryParse([string]$env:PARITY_CONTAINER_TIMEOUT_MINUTES, [ref]$containerScriptTimeoutMinutes) | Out-Null
+          [int]::TryParse([string]$env:PARITY_INSTALLER_TIMEOUT_MINUTES, [ref]$installerTimeoutMinutes) | Out-Null
+          [int]::TryParse([string]$env:PARITY_VI_ANALYZER_TIMEOUT_MINUTES, [ref]$viAnalyzerTimeoutMinutes) | Out-Null
+          [int]::TryParse([string]$env:PARITY_POSTPHASE_COPY_TIMEOUT_SECONDS, [ref]$postphaseCopyTimeoutSeconds) | Out-Null
           if ($containerScriptTimeoutMinutes -lt 30) { $containerScriptTimeoutMinutes = 30 }
           if ($installerTimeoutMinutes -lt 5) { $installerTimeoutMinutes = 5 }
           if ($viAnalyzerTimeoutMinutes -lt 5) { $viAnalyzerTimeoutMinutes = 5 }
           if ($postphaseCopyTimeoutSeconds -lt 30) { $postphaseCopyTimeoutSeconds = 30 }
 
-          $labviewX86NipkgInstallCmd = '${{ vars.LABVIEW_X86_NIPKG_INSTALL_CMD }}'
+          $labviewX86NipkgInstallCmd = [string]$env:PARITY_LABVIEW_X86_NIPKG_INSTALL_CMD
           if ([string]::IsNullOrWhiteSpace($labviewX86NipkgInstallCmd)) {
             $nipkgExe = '"C:\Program Files\National Instruments\NI Package Manager\nipkg.exe"'
             if ($parityExecutionYear -eq '2026') {
@@ -981,7 +987,7 @@ jobs:
 
           $containerName = "lvie-gate-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $containerName = $containerName.ToLowerInvariant()
-          $dockerDnsRaw = '${{ vars.LABVIEW_WINDOWS_DOCKER_DNS }}'
+          $dockerDnsRaw = [string]$env:PARITY_DOCKER_DNS
           if ([string]::IsNullOrWhiteSpace($dockerDnsRaw)) {
             $dockerDnsRaw = '8.8.8.8'
           }
