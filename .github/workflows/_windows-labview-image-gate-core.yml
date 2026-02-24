@@ -460,7 +460,7 @@ jobs:
               $viAnalyzerInstallCommand = "`"$nipkgExe`" install --accept-eulas --yes --include-recommended ni-labview-vi-analyzer-toolkit-lic"
             }
             $viAnalyzerInstallLogPath = Join-Path $artifactRoot 'vi-analyzer-install.log'
-            $viAnalyzerInstallProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/s', '/c', "$viAnalyzerInstallCommand > `"$viAnalyzerInstallLogPath`" 2>&1") -NoNewWindow -Wait -PassThru
+            $viAnalyzerInstallProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/s', '/c', "call $viAnalyzerInstallCommand > `"$viAnalyzerInstallLogPath`" 2>&1") -NoNewWindow -Wait -PassThru
             if ([int]$viAnalyzerInstallProcess.ExitCode -ne 0) {
               $installTail = ''
               if (Test-Path -LiteralPath $viAnalyzerInstallLogPath -PathType Leaf) {
@@ -554,7 +554,7 @@ jobs:
               $viAnalyzerInstallCommand = "`"$nipkgExe`" install --accept-eulas --yes --include-recommended ni-labview-vi-analyzer-toolkit-lic"
             }
             $viAnalyzerInstallLogPath = Join-Path $artifactRoot 'vi-analyzer-install.log'
-            $viAnalyzerInstallProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/s', '/c', "$viAnalyzerInstallCommand > `"$viAnalyzerInstallLogPath`" 2>&1") -NoNewWindow -Wait -PassThru
+            $viAnalyzerInstallProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/s', '/c', "call $viAnalyzerInstallCommand > `"$viAnalyzerInstallLogPath`" 2>&1") -NoNewWindow -Wait -PassThru
             if ([int]$viAnalyzerInstallProcess.ExitCode -ne 0) {
               $installTail = ''
               if (Test-Path -LiteralPath $viAnalyzerInstallLogPath -PathType Leaf) {
