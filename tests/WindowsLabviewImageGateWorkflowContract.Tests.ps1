@@ -53,8 +53,12 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26\.1/released --name=ni-labview-2026-core-x86-en-2026-q1-released'
         $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20\.0/released --name=ni-labview-2020-core-x86-en-2020-released'
         $script:coreWorkflowContent | Should -Match "\$hostDevRoot = 'C:\\dev'"
+        $script:coreWorkflowContent | Should -Match "\$hostLabview2020x64Root = 'C:\\Program Files\\National Instruments\\LabVIEW 2020'"
+        $script:coreWorkflowContent | Should -Match "\$hostLabview2020x86Root = 'C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020'"
         $script:coreWorkflowContent | Should -Not -Match 'hostPwshRoot'
         $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostDevRoot,target=C:\\dev"'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostLabview2020x64Root,target=C:\\Program Files\\National Instruments\\LabVIEW 2020,readonly"'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostLabview2020x86Root,target=C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020,readonly"'
         $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGitRoot,target=C:\\host-tools\\Git,readonly"'
         $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGhRoot,target=C:\\host-tools\\GitHubCLI,readonly"'
         $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGCliRoot,target=C:\\host-tools\\G-CLI,readonly"'
