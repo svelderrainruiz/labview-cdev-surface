@@ -74,10 +74,19 @@ Section "Install"
 
   StrCpy $3 "C:\Program Files\National Instruments\LabVIEW ${REQUIRED_LABVIEW_YEAR}\LabVIEW.exe"
   StrCpy $4 "C:\Program Files (x86)\National Instruments\LabVIEW ${REQUIRED_LABVIEW_YEAR}\LabVIEW.exe"
+  ReadEnvStr $7 "LVIE_GATE_SINGLE_PPL_BITNESS"
   FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
   FileWrite $2 "required_labview_x64_exe=$3$\r$\n"
   FileWrite $2 "required_labview_x86_exe=$4$\r$\n"
+  FileWrite $2 "single_ppl_bitness=$7$\r$\n"
   FileClose $2
+
+  ${If} $7 == "64"
+    FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
+    FileWrite $2 "x86_bootstrap_skipped=true$\r$\n"
+    FileClose $2
+    Goto labview_x86_ready
+  ${EndIf}
 
   IfFileExists "$4" labview_x86_ready 0
   ReadEnvStr $5 "${X86_NIPKG_ENV}"
