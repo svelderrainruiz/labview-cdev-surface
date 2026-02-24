@@ -45,15 +45,22 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match 'cdev-cli-linux-x64\.tar\.gz'
         $script:scriptContent | Should -Match 'Expand-CdevCliWindowsBundle'
         $script:scriptContent | Should -Match 'cli-bundle'
+        $script:scriptContent | Should -Match 'release_build_contract'
+        $script:scriptContent | Should -Match 'container_parity_contract'
+        $script:scriptContent | Should -Match 'LVIE_INSTALLER_EXECUTION_PROFILE'
+        $script:scriptContent | Should -Match 'host-release'
+        $script:scriptContent | Should -Match 'container-parity'
         $script:scriptContent | Should -Match 'required_ppl_bitnesses'
         $script:scriptContent | Should -Match 'required_vip_bitness'
         $script:scriptContent | Should -Match '-InstallerExecutionContext NsisInstall'
+        $script:scriptContent | Should -Match 'Container parity profile requires LVIE_GATE_SINGLE_PPL_BITNESS'
         $script:scriptContent | Should -Match 'Invoke-RunnerCliPplCapabilityCheck'
         $script:scriptContent | Should -Match 'Test-PplBuildLabVIEWVersionAlignment'
         $script:scriptContent | Should -Match 'labviewcli-executebuildspec-\*\.log'
         $script:scriptContent | Should -Match 'Illegal combination: PPL build executed with LabVIEW'
         $script:scriptContent | Should -Match 'failed on first attempt; retrying once after additional LabVIEW cleanup'
         $script:scriptContent | Should -Match 'Invoke-RunnerCliVipPackageHarnessCheck'
+        $script:scriptContent | Should -Match 'VIP harness is skipped for execution profile ''\$executionProfile''\.'
         $script:scriptContent | Should -Match 'Invoke-VipcApplyWithVipmCli'
         $script:scriptContent | Should -Match 'Get-VipcMismatchAssessment'
         $script:scriptContent | Should -Match 'Invoke-PreVipLabVIEWCloseBestEffort'
@@ -69,6 +76,8 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match 'vipc assert'
         $script:scriptContent | Should -Match 'vip build'
         $script:scriptContent | Should -Match 'Write-InstallerFeedback'
+        $script:scriptContent | Should -Match 'execution_profile = \$executionProfile'
+        $script:scriptContent | Should -Match 'contract_split = \$contractSplit'
         $script:scriptContent | Should -Match 'ppl_capability_checks'
         $script:scriptContent | Should -Match 'post_action_sequence'
         $script:scriptContent | Should -Match 'governance-audit'
@@ -76,10 +85,12 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match 'branch_only_failure'
     }
 
-    It 'sets a workspace-scoped LVIE_WORKTREE_ROOT during post-actions' {
+    It 'preserves explicit LVIE_WORKTREE_ROOT and defaults to workspace root when unset' {
         $script:scriptContent | Should -Match '\$originalWorktreeRoot = \$env:LVIE_WORKTREE_ROOT'
+        $script:scriptContent | Should -Match '\$effectiveWorktreeRoot = if \(\[string\]::IsNullOrWhiteSpace\(\$originalWorktreeRoot\)\) \{ \$resolvedWorkspaceRoot \} else \{ \$originalWorktreeRoot \}'
         $script:scriptContent | Should -Match '\$env:LVIE_WORKTREE_ROOT = \$effectiveWorktreeRoot'
-        $script:scriptContent | Should -Match 'Overriding LVIE_WORKTREE_ROOT for post-actions'
+        $script:scriptContent | Should -Match 'Setting LVIE_WORKTREE_ROOT to workspace root for post-actions'
+        $script:scriptContent | Should -Match 'Using existing LVIE_WORKTREE_ROOT for post-actions'
     }
 
     It 'has parse-safe PowerShell syntax' {
