@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build installer payload for gate
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate'
@@ -49,7 +49,7 @@ jobs:
 
           Copy-Item -Path "$env:GITHUB_WORKSPACE/scripts/Install-WorkspaceFromManifest.ps1" -Destination (Join-Path $payloadRoot 'scripts/Install-WorkspaceFromManifest.ps1') -Force
 
-          & pwsh -NoProfile -File "$env:GITHUB_WORKSPACE/scripts/Build-RunnerCliBundleFromManifest.ps1" `
+          & powershell -NoProfile -ExecutionPolicy RemoteSigned -File "$env:GITHUB_WORKSPACE/scripts/Build-RunnerCliBundleFromManifest.ps1" `
             -ManifestPath (Join-Path $payloadRoot 'workspace-governance/workspace-governance.json') `
             -OutputRoot (Join-Path $payloadRoot 'tools/runner-cli/win-x64') `
             -RepoName 'labview-icon-editor' `
@@ -94,7 +94,7 @@ jobs:
           }
           $nsisRoot = '${{ vars.NSIS_ROOT }}'
           if ([string]::IsNullOrWhiteSpace($nsisRoot)) { $nsisRoot = 'C:\Program Files (x86)\NSIS' }
-          & pwsh -NoProfile -File "$env:GITHUB_WORKSPACE/scripts/Build-WorkspaceBootstrapInstaller.ps1" `
+          & powershell -NoProfile -ExecutionPolicy RemoteSigned -File "$env:GITHUB_WORKSPACE/scripts/Build-WorkspaceBootstrapInstaller.ps1" `
             -PayloadRoot $payloadRoot `
             -OutputPath $installerPath `
             -WorkspaceRootDefault 'C:\workspace\gate-dev' `
@@ -106,7 +106,7 @@ jobs:
           }
 
       - name: Validate Windows container engine and configure isolation
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $labviewImage = '${{ vars.LABVIEW_WINDOWS_IMAGE }}'
@@ -182,7 +182,7 @@ jobs:
           "LABVIEW_WINDOWS_DOCKER_ISOLATION=$effectiveIsolation" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Run installer and runner-cli gate in Windows container
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate'
@@ -382,7 +382,7 @@ jobs:
       - name: Capture gate metadata
         id: capture-gate-metadata
         if: always()
-        shell: pwsh
+        shell: powershell
         env:
           JOB_STATUS: ${{ job.status }}
         run: |

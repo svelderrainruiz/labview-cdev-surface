@@ -28,6 +28,9 @@ Describe 'Windows LabVIEW image gate workflow contract' {
     It 'targets windows containers with installer-post-action report checks in core workflow' {
         $script:coreWorkflowContent | Should -Match 'workflow_call:'
         $script:coreWorkflowContent | Should -Match 'runs-on:\s*\[self-hosted,\s*windows,\s*self-hosted-windows-lv,\s*windows-containers,\s*user-session,\s*cdev-surface-windows-gate\]'
+        $script:coreWorkflowContent | Should -Match 'shell:\s*powershell'
+        $script:coreWorkflowContent | Should -Not -Match 'shell:\s*pwsh'
+        $script:coreWorkflowContent | Should -Not -Match '&\s*pwsh\s+-NoProfile\s+-File'
         $script:coreWorkflowContent | Should -Match 'nationalinstruments/labview:2026q1-windows'
         $script:coreWorkflowContent | Should -Match 'LABVIEW_WINDOWS_IMAGE'
         $script:coreWorkflowContent | Should -Match 'LABVIEW_WINDOWS_DOCKER_ISOLATION'
@@ -52,6 +55,7 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Match '--env "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=\$labviewX86NipkgInstallCmd"'
         $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26\.1/released --name=ni-labview-2026-core-x86-en-2026-q1-released'
         $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20\.0/released --name=ni-labview-2020-core-x86-en-2020-released'
+        $script:coreWorkflowContent | Should -Not -Match 'feed-add\s+ni-labview-[^\s]+\s+https://'
         $script:coreWorkflowContent | Should -Match "\$hostDevRoot = 'C:\\dev'"
         $script:coreWorkflowContent | Should -Match "\$hostLabview2020x64Root = 'C:\\Program Files\\National Instruments\\LabVIEW 2020'"
         $script:coreWorkflowContent | Should -Match "\$hostLabview2020x86Root = 'C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020'"
