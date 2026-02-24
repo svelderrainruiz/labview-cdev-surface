@@ -263,6 +263,52 @@ jobs:
               throw "Failed to configure git safe.directory entry for host release gate path: $safeRepoPath"
             }
           }
+          foreach ($repo in @($manifest.managed_repos)) {
+            $repoPath = [string]$repo.path
+            $repoName = [string]$repo.repo_name
+            $repoOriginUrl = [string]$repo.required_remotes.origin
+            $repoDefaultBranch = [string]$repo.default_branch
+            $repoPinnedSha = ([string]$repo.pinned_sha).ToLowerInvariant()
+
+            if ([string]::IsNullOrWhiteSpace($repoPath) -or [string]::IsNullOrWhiteSpace($repoPinnedSha)) {
+              continue
+            }
+
+            if (-not (Test-Path -LiteralPath $repoPath -PathType Container)) {
+              if ([string]::IsNullOrWhiteSpace($repoOriginUrl)) {
+                throw "Managed repository '$repoName' is missing required_remotes.origin for clone bootstrap."
+              }
+              $repoParent = Split-Path -Parent $repoPath
+              if (-not (Test-Path -LiteralPath $repoParent -PathType Container)) {
+                New-Item -Path $repoParent -ItemType Directory -Force | Out-Null
+              }
+              $cloneOutput = & git clone $repoOriginUrl $repoPath 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to clone managed repository '$repoName' ($repoPath). $([string]::Join("`n", @($cloneOutput)))"
+              }
+            }
+
+            if (-not (Test-Path -LiteralPath (Join-Path $repoPath '.git') -PathType Container)) {
+              throw "Managed repository path is not a git repository: $repoPath"
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($repoDefaultBranch)) {
+              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoDefaultBranch 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to fetch origin/$repoDefaultBranch for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+              }
+            } else {
+              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoPinnedSha 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to fetch pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+              }
+            }
+
+            $checkoutOutput = & git -C $repoPath checkout --detach $repoPinnedSha 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to checkout pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($checkoutOutput)))"
+            }
+          }
 
           if (Test-Path -LiteralPath $workspaceRoot -PathType Container) {
             Remove-Item -LiteralPath $workspaceRoot -Recurse -Force
@@ -696,6 +742,89 @@ jobs:
               throw "Required host tool root is missing for container bind mount: $hostToolRoot"
             }
           }
+          $manifestPath = Join-Path $artifactRoot 'payload\workspace-governance\workspace-governance.json'
+          if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "Workspace governance manifest is missing for container parity host preflight: $manifestPath"
+          }
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $safeRepoPaths = @(
+            @($manifest.managed_repos |
+              ForEach-Object { [string]$_.path } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Select-Object -Unique)
+          )
+          foreach ($safeRepoPath in $safeRepoPaths) {
+            & git config --global --add safe.directory $safeRepoPath 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to configure git safe.directory entry for container parity host preflight path: $safeRepoPath"
+            }
+          }
+          foreach ($repo in @($manifest.managed_repos)) {
+            $repoPath = [string]$repo.path
+            $repoName = [string]$repo.repo_name
+            $repoOriginUrl = [string]$repo.required_remotes.origin
+            $repoDefaultBranch = [string]$repo.default_branch
+            $repoPinnedSha = ([string]$repo.pinned_sha).ToLowerInvariant()
+
+            if ([string]::IsNullOrWhiteSpace($repoPath) -or [string]::IsNullOrWhiteSpace($repoPinnedSha)) {
+              continue
+            }
+
+            if (-not (Test-Path -LiteralPath $repoPath -PathType Container)) {
+              if ([string]::IsNullOrWhiteSpace($repoOriginUrl)) {
+                throw "Managed repository '$repoName' is missing required_remotes.origin for clone bootstrap."
+              }
+              $repoParent = Split-Path -Parent $repoPath
+              if (-not (Test-Path -LiteralPath $repoParent -PathType Container)) {
+                New-Item -Path $repoParent -ItemType Directory -Force | Out-Null
+              }
+              $cloneOutput = & git clone $repoOriginUrl $repoPath 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to clone managed repository '$repoName' ($repoPath). $([string]::Join("`n", @($cloneOutput)))"
+              }
+            }
+
+            if (-not (Test-Path -LiteralPath (Join-Path $repoPath '.git') -PathType Container)) {
+              throw "Managed repository path is not a git repository: $repoPath"
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($repoDefaultBranch)) {
+              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoDefaultBranch 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to fetch origin/$repoDefaultBranch for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+              }
+            } else {
+              $fetchOutput = & git -C $repoPath fetch --no-tags origin $repoPinnedSha 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to fetch pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($fetchOutput)))"
+              }
+            }
+
+            $checkoutOutput = & git -C $repoPath checkout --detach $repoPinnedSha 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to checkout pinned SHA '$repoPinnedSha' for managed repository '$repoName'. $([string]::Join("`n", @($checkoutOutput)))"
+            }
+          }
+
+          $hostMountRoot = Join-Path $artifactRoot 'host-mounts'
+          if (Test-Path -LiteralPath $hostMountRoot -PathType Container) {
+            Remove-Item -LiteralPath $hostMountRoot -Recurse -Force
+          }
+          New-Item -Path $hostMountRoot -ItemType Directory -Force | Out-Null
+
+          $hostGitMountSource = Join-Path $hostMountRoot 'Git'
+          $hostGhMountSource = Join-Path $hostMountRoot 'GitHubCLI'
+          $hostGCliMountSource = Join-Path $hostMountRoot 'G-CLI'
+          foreach ($junction in @(
+            @{ path = $hostGitMountSource; target = $hostGitRoot },
+            @{ path = $hostGhMountSource; target = $hostGhRoot },
+            @{ path = $hostGCliMountSource; target = $hostGCliRoot }
+          )) {
+            if (Test-Path -LiteralPath $junction.path) {
+              Remove-Item -LiteralPath $junction.path -Force
+            }
+            New-Item -Path $junction.path -ItemType Junction -Target $junction.target -Force | Out-Null
+          }
 
           $containerName = "lvie-gate-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $containerName = $containerName.ToLowerInvariant()
@@ -713,13 +842,11 @@ jobs:
             '--env', "PARITY_BUILD_SPEC_MARKER=$env:PARITY_BUILD_SPEC_MARKER"
           )
           $dockerMountSpecs = @(
-            "type=bind,source=""$($env:GITHUB_WORKSPACE)"",target=""C:\workspace""",
-            "type=bind,source=""$hostDevRoot"",target=""C:\dev""",
-            "type=bind,source=""$hostLabview2020x64Root"",target=""C:\Program Files\National Instruments\LabVIEW 2020"",readonly",
-            "type=bind,source=""$hostLabview2020x86Root"",target=""C:\Program Files (x86)\National Instruments\LabVIEW 2020"",readonly",
-            "type=bind,source=""$hostGitRoot"",target=""C:\host-tools\Git"",readonly",
-            "type=bind,source=""$hostGhRoot"",target=""C:\host-tools\GitHubCLI"",readonly",
-            "type=bind,source=""$hostGCliRoot"",target=""C:\host-tools\G-CLI"",readonly"
+            "type=bind,source=$($env:GITHUB_WORKSPACE),target=C:\workspace",
+            "type=bind,source=$hostDevRoot,target=C:\dev",
+            "type=bind,source=$hostGitMountSource,target=C:\host-tools\Git,readonly",
+            "type=bind,source=$hostGhMountSource,target=C:\host-tools\GitHubCLI,readonly",
+            "type=bind,source=$hostGCliMountSource,target=C:\host-tools\G-CLI,readonly"
           )
           foreach ($dockerMountSpec in $dockerMountSpecs) {
             $dockerArgs += @('--mount', $dockerMountSpec)
