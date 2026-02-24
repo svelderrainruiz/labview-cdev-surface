@@ -405,7 +405,7 @@ jobs:
   windows-host-linux-prereq-x86:
     name: Windows Host Linux Prereq (native 2025q3 x86)
     needs: [resolve-parity-context]
-    runs-on: [self-hosted, windows, self-hosted-windows-lv]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, user-session, cdev-surface-windows-gate]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -499,7 +499,7 @@ jobs:
   windows-host-linux-prereq-x64:
     name: Windows Host Linux Prereq (native 2025q3 x64)
     needs: [resolve-parity-context]
-    runs-on: [self-hosted, windows, self-hosted-windows-lv]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, user-session, cdev-surface-windows-gate]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
