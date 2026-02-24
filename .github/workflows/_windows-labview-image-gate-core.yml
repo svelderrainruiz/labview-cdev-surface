@@ -159,7 +159,7 @@ jobs:
   windows-host-release-gate:
     name: Windows Host Release Gate (LabVIEW ${{ needs.resolve-parity-context.outputs.release_required_year }})
     needs: [resolve-parity-context]
-    runs-on: [self-hosted, windows, self-hosted-windows-lv]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, user-session, cdev-surface-windows-gate]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
