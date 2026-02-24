@@ -80,6 +80,7 @@ jobs:
       override_applied: ${{ steps.evaluate.outputs.override_applied }}
       override_reason: ${{ steps.evaluate.outputs.override_reason }}
       override_incident_url: ${{ steps.evaluate.outputs.override_incident_url }}
+      effective_allow_existing_tag: ${{ steps.evaluate.outputs.effective_allow_existing_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -92,6 +93,7 @@ jobs:
           WINDOWS_GATE_RESULT: ${{ needs.windows_gate.result }}
           LINUX_GATE_RESULT: ${{ needs.linux_parity_gate.result }}
           ALLOW_GATE_OVERRIDE: ${{ inputs.allow_gate_override }}
+          ALLOW_EXISTING_TAG_INPUT: ${{ inputs.allow_existing_tag }}
           OVERRIDE_REASON_INPUT: ${{ inputs.override_reason }}
           OVERRIDE_INCIDENT_URL_INPUT: ${{ inputs.override_incident_url }}
         run: |
@@ -101,10 +103,18 @@ jobs:
           $windowsGateResult = [string]$env:WINDOWS_GATE_RESULT
           $linuxGateResult = [string]$env:LINUX_GATE_RESULT
           $allowOverride = [System.Convert]::ToBoolean([string]$env:ALLOW_GATE_OVERRIDE)
+          $allowExistingTagInput = [System.Convert]::ToBoolean([string]$env:ALLOW_EXISTING_TAG_INPUT)
+          $refName = [string]$env:GITHUB_REF_NAME
           $overrideReason = [string]$env:OVERRIDE_REASON_INPUT
           $overrideIncidentUrl = [string]$env:OVERRIDE_INCIDENT_URL_INPUT
 
           $overrideApplied = $false
+          $effectiveAllowExistingTag = $allowExistingTagInput
+          if ($refName -ne 'main' -and -not $allowExistingTagInput) {
+            $effectiveAllowExistingTag = $true
+            Write-Host "::notice::allow_existing_tag normalized to true for non-main ref '$refName' to avoid tag-collision noise during validation runs."
+          }
+
           if ($repoGuardResult -ne 'success') {
             throw "Repository guard did not succeed. Blocking release publish."
           }
@@ -155,6 +165,7 @@ jobs:
           "override_applied=$($overrideApplied.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "override_reason=$overrideReason" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "override_incident_url=$overrideIncidentUrl" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "effective_allow_existing_tag=$($effectiveAllowExistingTag.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
   release_publish:
     name: Release Publish
@@ -162,7 +173,7 @@ jobs:
     uses: ./.github/workflows/_release-workspace-installer-core.yml
     with:
       release_tag: ${{ inputs.release_tag }}
-      allow_existing_tag: ${{ inputs.allow_existing_tag }}
+      allow_existing_tag: ${{ fromJSON(needs.gate_policy.outputs.effective_allow_existing_tag) }}
       prerelease: ${{ inputs.prerelease }}
       override_applied: ${{ fromJSON(needs.gate_policy.outputs.override_applied) }}
       override_reason: ${{ needs.gate_policy.outputs.override_reason }}

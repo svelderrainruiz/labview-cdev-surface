@@ -40,9 +40,11 @@ Describe 'Release with Windows gate workflow contract' {
         $script:workflowContent | Should -Match 'gate_policy:'
         $script:workflowContent | Should -Match 'needs:\s*\[repo_guard,\s*windows_gate,\s*linux_parity_gate\]'
         $script:workflowContent | Should -Match 'if:\s*\$\{\{\s*always\(\)\s*\}\}'
+        $script:workflowContent | Should -Match 'effective_allow_existing_tag:\s*\$\{\{\s*steps\.evaluate\.outputs\.effective_allow_existing_tag\s*\}\}'
         $script:workflowContent | Should -Match 'release_publish:'
         $script:workflowContent | Should -Match 'needs:\s*\[gate_policy\]'
         $script:workflowContent | Should -Match 'uses:\s*\./\.github/workflows/_release-workspace-installer-core\.yml'
+        $script:workflowContent | Should -Match 'allow_existing_tag:\s*\$\{\{\s*fromJSON\(needs\.gate_policy\.outputs\.effective_allow_existing_tag\)\s*\}\}'
     }
 
     It 'enforces hard block, release artifact policy, and controlled override metadata requirements' {
@@ -55,6 +57,10 @@ Describe 'Release with Windows gate workflow contract' {
         $script:workflowContent | Should -Match 'overrideIncidentUrl -notmatch'
         $script:workflowContent | Should -Match 'GitHub issue/discussion URL'
         $script:workflowContent | Should -Match '::warning::Gate failure override is active'
+        $script:workflowContent | Should -Match 'ALLOW_EXISTING_TAG_INPUT'
+        $script:workflowContent | Should -Match '\$refName -ne ''main'' -and -not \$allowExistingTagInput'
+        $script:workflowContent | Should -Match 'allow_existing_tag normalized to true for non-main ref'
+        $script:workflowContent | Should -Match 'effective_allow_existing_tag='
     }
 
     It 'defines non-canceling release-tag concurrency' {
