@@ -87,11 +87,11 @@ Section "Install"
   FileWrite $2 "x86_nipkg_cmd=$5$\r$\n"
   FileClose $2
   ${If} $5 == ""
+    StrCpy $5 "$\"C:\Program Files\National Instruments\NI Package Manager\nipkg.exe$\" install --accept-eulas --yes --include-recommended ni-labview-${REQUIRED_LABVIEW_YEAR}-core-en-x86"
     FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
-    FileWrite $2 "x86_nipkg_status=missing_command$\r$\n"
+    FileWrite $2 "x86_nipkg_status=using_default_command$\r$\n"
+    FileWrite $2 "x86_nipkg_cmd=$5$\r$\n"
     FileClose $2
-    SetErrorLevel 193
-    Abort
   ${EndIf}
   ExecWait '"$SYSDIR\cmd.exe" /c "$5 >> "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" 2>&1"' $0
   FileOpen $2 "${WORKSPACE_ROOT}\${LAUNCH_LOG_REL}" a
