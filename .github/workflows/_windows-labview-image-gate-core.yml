@@ -69,11 +69,6 @@ jobs:
           $requiredLabviewYearOverride = '${{ vars.LABVIEW_GATE_REQUIRED_LABVIEW_YEAR }}'
           if (-not [string]::IsNullOrWhiteSpace($requiredLabviewYearOverride)) {
             $requiredLabviewYear = $requiredLabviewYearOverride
-          } else {
-            $imageYearMatch = [regex]::Match($labviewImageForGate, '(\d{4})q\d+-windows')
-            if ($imageYearMatch.Success) {
-              $requiredLabviewYear = [string]$imageYearMatch.Groups[1].Value
-            }
           }
 
           $gateManifestPath = Join-Path $payloadRoot 'workspace-governance\workspace-governance.json'
@@ -86,6 +81,12 @@ jobs:
               }
             } catch {
               throw "Unable to parse installer contract required year from '$gateManifestPath'. $($_.Exception.Message)"
+            }
+          }
+          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
+            $imageYearMatch = [regex]::Match($labviewImageForGate, '(\d{4})q\d+-windows')
+            if ($imageYearMatch.Success) {
+              $requiredLabviewYear = [string]$imageYearMatch.Groups[1].Value
             }
           }
           if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
@@ -299,6 +300,18 @@ jobs:
             $dockerIsolation = 'process'
           }
           $gateRequiredLabviewYear = '${{ vars.LABVIEW_GATE_REQUIRED_LABVIEW_YEAR }}'
+          $gateManifestPath = Join-Path $env:GITHUB_WORKSPACE 'artifacts\windows-image-gate\payload\workspace-governance\workspace-governance.json'
+          if ([string]::IsNullOrWhiteSpace($gateRequiredLabviewYear) -and (Test-Path -LiteralPath $gateManifestPath -PathType Leaf)) {
+            try {
+              $gateManifest = Get-Content -LiteralPath $gateManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+              $manifestRequiredYear = [string]$gateManifest.installer_contract.labview_gate.required_year
+              if (-not [string]::IsNullOrWhiteSpace($manifestRequiredYear)) {
+                $gateRequiredLabviewYear = $manifestRequiredYear
+              }
+            } catch {
+              throw "Unable to parse installer contract required year from '$gateManifestPath'. $($_.Exception.Message)"
+            }
+          }
           if ([string]::IsNullOrWhiteSpace($gateRequiredLabviewYear)) {
             $imageYearMatch = [regex]::Match($labviewImage, '(\d{4})q\d+-windows')
             if ($imageYearMatch.Success) {
