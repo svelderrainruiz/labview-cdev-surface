@@ -456,9 +456,9 @@ jobs:
               }
               $viAnalyzerInstallCommand = "`"$nipkgExe`" install --accept-eulas --yes --include-recommended ni-vi-analyzer-toolkit"
             }
-            & powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $viAnalyzerInstallCommand
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to install VI Analyzer for LabVIEW $nativeLabviewVersion prerequisite lane. exit_code=$LASTEXITCODE"
+            $viAnalyzerInstallProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/s', '/c', $viAnalyzerInstallCommand) -NoNewWindow -Wait -PassThru
+            if ([int]$viAnalyzerInstallProcess.ExitCode -ne 0) {
+              throw "Failed to install VI Analyzer for LabVIEW $nativeLabviewVersion prerequisite lane. exit_code=$([int]$viAnalyzerInstallProcess.ExitCode)"
             }
           }
 
@@ -538,9 +538,9 @@ jobs:
               }
               $viAnalyzerInstallCommand = "`"$nipkgExe`" install --accept-eulas --yes --include-recommended ni-vi-analyzer-toolkit"
             }
-            & powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $viAnalyzerInstallCommand
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to install VI Analyzer for LabVIEW $nativeLabviewVersion prerequisite lane. exit_code=$LASTEXITCODE"
+            $viAnalyzerInstallProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/s', '/c', $viAnalyzerInstallCommand) -NoNewWindow -Wait -PassThru
+            if ([int]$viAnalyzerInstallProcess.ExitCode -ne 0) {
+              throw "Failed to install VI Analyzer for LabVIEW $nativeLabviewVersion prerequisite lane. exit_code=$([int]$viAnalyzerInstallProcess.ExitCode)"
             }
           }
 
