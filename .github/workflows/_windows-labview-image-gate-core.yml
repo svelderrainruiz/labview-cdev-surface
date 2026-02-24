@@ -357,22 +357,26 @@ jobs:
             }
           }
 
-          docker run --rm `
-            --isolation=$dockerIsolation `
-            --env "VIPM_COMMUNITY_EDITION=true" `
-            --env "LVIE_OFFLINE_GIT_MODE=true" `
-            --env "LVIE_GATE_REQUIRED_LABVIEW_YEAR=$gateRequiredLabviewYear" `
-            --env "LVIE_GATE_SINGLE_PPL_BITNESS=$singlePplBitness" `
-            --env "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=$labviewX86NipkgInstallCmd" `
-            --mount "type=bind,source=${env:GITHUB_WORKSPACE},target=C:\workspace" `
-            --mount "type=bind,source=$hostDevRoot,target=C:\dev" `
-            --mount "type=bind,source=$hostLabview2020x64Root,target=C:\Program Files\National Instruments\LabVIEW 2020,readonly" `
-            --mount "type=bind,source=$hostLabview2020x86Root,target=C:\Program Files (x86)\National Instruments\LabVIEW 2020,readonly" `
-            --mount "type=bind,source=$hostGitRoot,target=C:\host-tools\Git,readonly" `
-            --mount "type=bind,source=$hostGhRoot,target=C:\host-tools\GitHubCLI,readonly" `
-            --mount "type=bind,source=$hostGCliRoot,target=C:\host-tools\G-CLI,readonly" `
-            $labviewImage `
-            powershell -NoProfile -Command $containerCmd
+          $dockerArgs = @(
+            'run',
+            '--rm',
+            "--isolation=$dockerIsolation",
+            '--env', 'VIPM_COMMUNITY_EDITION=true',
+            '--env', 'LVIE_OFFLINE_GIT_MODE=true',
+            '--env', "LVIE_GATE_REQUIRED_LABVIEW_YEAR=$gateRequiredLabviewYear",
+            '--env', "LVIE_GATE_SINGLE_PPL_BITNESS=$singlePplBitness",
+            '--env', "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=$labviewX86NipkgInstallCmd",
+            '--mount', "type=bind,source=${env:GITHUB_WORKSPACE},target=C:\workspace",
+            '--mount', "type=bind,source=$hostDevRoot,target=C:\dev",
+            '--mount', "type=bind,source=$hostLabview2020x64Root,target=C:\Program Files\National Instruments\LabVIEW 2020,readonly",
+            '--mount', "type=bind,source=$hostLabview2020x86Root,target=C:\Program Files (x86)\National Instruments\LabVIEW 2020,readonly",
+            '--mount', "type=bind,source=$hostGitRoot,target=C:\host-tools\Git,readonly",
+            '--mount', "type=bind,source=$hostGhRoot,target=C:\host-tools\GitHubCLI,readonly",
+            '--mount', "type=bind,source=$hostGCliRoot,target=C:\host-tools\G-CLI,readonly",
+            $labviewImage,
+            'powershell', '-NoProfile', '-Command', $containerCmd
+          )
+          & docker @dockerArgs
           if ($LASTEXITCODE -ne 0) {
             throw "Windows image gate failed."
           }
