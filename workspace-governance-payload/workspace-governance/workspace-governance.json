@@ -59,12 +59,12 @@
     },
     "cli_bundle": {
       "repo": "LabVIEW-Community-CI-CD/labview-cdev-cli",
-      "version": "0.1.0",
-      "source_commit": "35ad00364d366e8ebe924c65466b635290886ff1",
+      "version": "0.1.1",
+      "source_commit": "ab9d1588724b05b69cc067b56fecf385704d0dea",
       "asset_win": "cdev-cli-win-x64.zip",
-      "asset_win_sha256": "6869a2db9456a21689fde59da73c3f7e767e0a59a08880f1b015bcceb3e13be5",
+      "asset_win_sha256": "9e2c0d487edf206bfd0a28b1ccd14b8482ce7cab2772a2f49e2b606599add002",
       "asset_linux": "cdev-cli-linux-x64.tar.gz",
-      "asset_linux_sha256": "61589f136ae26c57f55810f50077180fe2c28f97ec66b2d30f03ed13b6d1dda1",
+      "asset_linux_sha256": "4f10400428100110d6b68f20c87409a172627ab068df0614632325b3ae882f92",
       "payload_root": "tools\\cdev-cli",
       "entrypoint_win": "tools\\cdev-cli\\win-x64\\cdev-cli\\scripts\\Invoke-CdevCli.ps1",
       "entrypoint_linux": "tools/cdev-cli/linux-x64/cdev-cli/scripts/Invoke-CdevCli.ps1"
@@ -124,7 +124,7 @@
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "893e8bb8784eccdb28c40b2a4490f621eca68c4d"
+      "pinned_sha": "4917e6bdf5bede718abb6cd900e0c3fa526f334b"
     },
     {
       "path": "C:\\dev\\labview-icon-editor-org",
@@ -157,7 +157,7 @@
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "893e8bb8784eccdb28c40b2a4490f621eca68c4d"
+      "pinned_sha": "4917e6bdf5bede718abb6cd900e0c3fa526f334b"
     },
     {
       "path": "C:\\dev\\labview-icon-editor-upstream",
@@ -188,7 +188,7 @@
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "893e8bb8784eccdb28c40b2a4490f621eca68c4d"
+      "pinned_sha": "4917e6bdf5bede718abb6cd900e0c3fa526f334b"
     },
     {
       "path": "C:\\dev\\labview-for-containers",
@@ -390,3 +390,5 @@
     }
   ]
 }
+
+

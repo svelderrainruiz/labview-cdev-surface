@@ -11,6 +11,9 @@ param(
     [string]$WorkspaceRootDefault = 'C:\dev',
 
     [Parameter(Mandatory = $false)]
+    [string]$RequiredLabviewYear = '2020',
+
+    [Parameter(Mandatory = $false)]
     [string]$NsisScriptPath,
 
     [Parameter(Mandatory = $false)]
@@ -176,6 +179,7 @@ function Invoke-NsisBuild {
         [Parameter(Mandatory = $true)][string]$StagedPayloadPath,
         [Parameter(Mandatory = $true)][string]$OutputInstallerPath,
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+        [Parameter(Mandatory = $true)][string]$LabviewYear,
         [Parameter(Mandatory = $true)][bool]$DeterministicBuild,
         [Parameter(Mandatory = $true)][long]$EpochSeconds
     )
@@ -185,6 +189,7 @@ function Invoke-NsisBuild {
         ("/DOUT_FILE=$OutputInstallerPath"),
         ("/DPAYLOAD_DIR=$StagedPayloadPath"),
         ("/DWORKSPACE_ROOT=$WorkspaceRoot"),
+        ("/DREQUIRED_LABVIEW_YEAR=$LabviewYear"),
         ("/DSOURCE_DATE_EPOCH=$EpochSeconds"),
         $ScriptPathResolved
     )
@@ -244,6 +249,7 @@ try {
                 -StagedPayloadPath $stagePath `
                 -OutputInstallerPath $outputPath `
                 -WorkspaceRoot $WorkspaceRootDefault `
+                -LabviewYear $RequiredLabviewYear `
                 -DeterministicBuild $Deterministic `
                 -EpochSeconds $epoch
             $hash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -285,6 +291,7 @@ try {
             -StagedPayloadPath $stagePath `
             -OutputInstallerPath $resolvedOutputPath `
             -WorkspaceRoot $WorkspaceRootDefault `
+            -LabviewYear $RequiredLabviewYear `
             -DeterministicBuild $Deterministic `
             -EpochSeconds $epoch
 

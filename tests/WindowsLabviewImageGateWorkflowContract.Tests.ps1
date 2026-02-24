@@ -28,6 +28,9 @@ Describe 'Windows LabVIEW image gate workflow contract' {
     It 'targets windows containers with installer-post-action report checks in core workflow' {
         $script:coreWorkflowContent | Should -Match 'workflow_call:'
         $script:coreWorkflowContent | Should -Match 'runs-on:\s*\[self-hosted,\s*windows,\s*self-hosted-windows-lv,\s*windows-containers,\s*user-session,\s*cdev-surface-windows-gate\]'
+        $script:coreWorkflowContent | Should -Match 'shell:\s*powershell'
+        $script:coreWorkflowContent | Should -Not -Match 'shell:\s*pwsh'
+        $script:coreWorkflowContent | Should -Not -Match '&\s*pwsh\s+-NoProfile\s+-File'
         $script:coreWorkflowContent | Should -Match 'nationalinstruments/labview:2026q1-windows'
         $script:coreWorkflowContent | Should -Match 'LABVIEW_WINDOWS_IMAGE'
         $script:coreWorkflowContent | Should -Match 'LABVIEW_WINDOWS_DOCKER_ISOLATION'
@@ -37,11 +40,38 @@ Describe 'Windows LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Match 'Falling back to Hyper-V isolation'
         $script:coreWorkflowContent | Should -Match '--isolation=\$dockerIsolation'
         $script:coreWorkflowContent | Should -Match 'automatic engine switching is disabled for non-interactive CI'
-        $script:coreWorkflowContent | Should -Match 'Get-Command pwsh'
+        $script:coreWorkflowContent | Should -Match "\$requiredCommands = @\('powershell', 'git', 'gh'\)"
+        $script:coreWorkflowContent | Should -Match 'Container runtime missing required commands after host-tool mount'
+        $script:coreWorkflowContent | Should -Match "VIPM_COMMUNITY_EDITION = 'true'"
+        $script:coreWorkflowContent | Should -Match '--env "VIPM_COMMUNITY_EDITION=true"'
+        $script:coreWorkflowContent | Should -Match 'LVIE_OFFLINE_GIT_MODE'
+        $script:coreWorkflowContent | Should -Match '--env "LVIE_OFFLINE_GIT_MODE=true"'
+        $script:coreWorkflowContent | Should -Match '-RequiredLabviewYear \$requiredLabviewYear'
+        $script:coreWorkflowContent | Should -Match 'LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD'
+        $script:coreWorkflowContent | Should -Match 'LVIE_GATE_REQUIRED_LABVIEW_YEAR'
+        $script:coreWorkflowContent | Should -Match 'LVIE_GATE_SINGLE_PPL_BITNESS'
+        $script:coreWorkflowContent | Should -Match '--env "LVIE_GATE_REQUIRED_LABVIEW_YEAR=\$gateRequiredLabviewYear"'
+        $script:coreWorkflowContent | Should -Match '--env "LVIE_GATE_SINGLE_PPL_BITNESS=\$singlePplBitness"'
+        $script:coreWorkflowContent | Should -Match '--env "LVIE_LABVIEW_X86_NIPKG_INSTALL_CMD=\$labviewX86NipkgInstallCmd"'
+        $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2026-x86/26\.1/released --name=ni-labview-2026-core-x86-en-2026-q1-released'
+        $script:coreWorkflowContent | Should -Match 'feed-add https://download\.ni\.com/support/nipkg/products/ni-l/ni-labview-2020-x86/20\.0/released --name=ni-labview-2020-core-x86-en-2020-released'
+        $script:coreWorkflowContent | Should -Not -Match 'feed-add\s+ni-labview-[^\s]+\s+https://'
+        $script:coreWorkflowContent | Should -Match "\$hostDevRoot = 'C:\\dev'"
+        $script:coreWorkflowContent | Should -Match "\$hostLabview2020x64Root = 'C:\\Program Files\\National Instruments\\LabVIEW 2020'"
+        $script:coreWorkflowContent | Should -Match "\$hostLabview2020x86Root = 'C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020'"
+        $script:coreWorkflowContent | Should -Not -Match 'hostPwshRoot'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostDevRoot,target=C:\\dev"'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostLabview2020x64Root,target=C:\\Program Files\\National Instruments\\LabVIEW 2020,readonly"'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostLabview2020x86Root,target=C:\\Program Files \(x86\)\\National Instruments\\LabVIEW 2020,readonly"'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGitRoot,target=C:\\host-tools\\Git,readonly"'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGhRoot,target=C:\\host-tools\\GitHubCLI,readonly"'
+        $script:coreWorkflowContent | Should -Match '--mount "type=bind,source=\$hostGCliRoot,target=C:\\host-tools\\G-CLI,readonly"'
         $script:coreWorkflowContent | Should -Match 'Install-WorkspaceFromManifest\.ps1'
         $script:coreWorkflowContent | Should -Match 'workspace-install-latest\.json'
         $script:coreWorkflowContent | Should -Match "ppl_capability_checks\.'32'\.status"
         $script:coreWorkflowContent | Should -Match "ppl_capability_checks\.'64'\.status"
+        $script:coreWorkflowContent | Should -Match 'selected_ppl_bitness'
+        $script:coreWorkflowContent | Should -Match 'selected_ppl_status'
         $script:coreWorkflowContent | Should -Match 'vip_package_build_check\.status'
         $script:coreWorkflowContent | Should -Match 'gate_status'
         $script:coreWorkflowContent | Should -Match 'gate_report_artifact_name'
