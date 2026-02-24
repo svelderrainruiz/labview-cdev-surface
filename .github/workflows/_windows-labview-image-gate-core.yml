@@ -699,6 +699,7 @@ jobs:
             timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
           } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath "C:\workspace\artifacts\windows-image-gate\parity\windows-container-parity-gate-report.json" -Encoding utf8
           '@
+          $containerCmdEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($containerCmd))
 
           $labviewImage = [string]$env:LABVIEW_WINDOWS_IMAGE
           if ([string]::IsNullOrWhiteSpace($labviewImage)) {
@@ -868,7 +869,7 @@ jobs:
           }
           $dockerArgs += @(
             $labviewImage,
-            'powershell', '-NoProfile', '-Command', $containerCmd
+            'powershell', '-NoProfile', '-EncodedCommand', $containerCmdEncoded
           )
 
           $dockerExitCode = 0
