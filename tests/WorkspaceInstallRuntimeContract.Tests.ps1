@@ -30,6 +30,9 @@ Describe 'Workspace install runtime contract' {
         $script:scriptContent | Should -Match 'head_sha_mismatch'
         $script:scriptContent | Should -Match 'remote_mismatch_'
         $script:scriptContent | Should -Match 'branch_identity_mismatch'
+        $script:scriptContent | Should -Match 'fork_upstream_not_aligned'
+        $script:scriptContent | Should -Match 'rev-list --left-right --count'
+        $script:scriptContent | Should -Match 'open a sync PR from fork main to merge upstream'
         $script:scriptContent | Should -Match 'LVIE_OFFLINE_GIT_MODE'
         $script:scriptContent | Should -Match 'Repository path missing in offline git mode'
     }

@@ -1562,6 +1562,13 @@ try {
             remote_checks = @()
             head_sha = ''
             branch_state = ''
+            fork_upstream_alignment = [ordered]@{
+                status = 'not_applicable'
+                branch = $defaultBranch
+                origin_ahead = $null
+                origin_behind = $null
+                message = ''
+            }
         }
 
         try {
@@ -1686,6 +1693,49 @@ try {
                 }
             }
 
+            $repoMode = [string]$repo.mode
+            $upstreamUrl = [string]$repo.required_remotes.upstream
+            $hasForkAlignmentScope = (
+                -not $offlineGitMode -and
+                $repoMode -eq 'fork' -and
+                -not [string]::IsNullOrWhiteSpace($upstreamUrl) -and
+                -not [string]::IsNullOrWhiteSpace($defaultBranch)
+            )
+            if ($hasForkAlignmentScope) {
+                $upstreamFetchResult = Invoke-Git -RepoPath $repoPath -Arguments @('fetch', '--no-tags', 'upstream', $defaultBranch)
+                if ($upstreamFetchResult.ExitCode -ne 0) {
+                    throw "Failed to fetch upstream/$defaultBranch for '$repoPath'. $([string]::Join("`n", @($upstreamFetchResult.Output)))"
+                }
+
+                $alignmentResult = Invoke-Git -RepoPath $repoPath -Arguments @('rev-list', '--left-right', '--count', "origin/$defaultBranch...upstream/$defaultBranch")
+                if ($alignmentResult.ExitCode -ne 0) {
+                    throw "Failed to compare fork/upstream alignment for '$repoPath'. $([string]::Join("`n", @($alignmentResult.Output)))"
+                }
+
+                $alignmentRaw = [string]([string]::Join("`n", @($alignmentResult.Output))).Trim()
+                $alignmentMatch = [regex]::Match($alignmentRaw, '^\s*(\d+)\s+(\d+)\s*$')
+                if (-not $alignmentMatch.Success) {
+                    throw "Unexpected rev-list output for fork/upstream alignment on '$repoPath': '$alignmentRaw'."
+                }
+
+                $originAhead = [int]$alignmentMatch.Groups[1].Value
+                $originBehind = [int]$alignmentMatch.Groups[2].Value
+                $repoResult.fork_upstream_alignment.status = if ($originBehind -eq 0) { 'aligned' } else { 'behind' }
+                $repoResult.fork_upstream_alignment.origin_ahead = $originAhead
+                $repoResult.fork_upstream_alignment.origin_behind = $originBehind
+
+                if ($originBehind -gt 0) {
+                    $repoResult.status = 'fail'
+                    $repoResult.issues += 'fork_upstream_not_aligned'
+                    $repoResult.fork_upstream_alignment.message = @(
+                        "Fork default branch is behind upstream by $originBehind commit(s) for '$repoPath' (origin ahead=$originAhead).",
+                        "Action: open a sync PR from fork main to merge upstream/$defaultBranch, then rerun installer harness.",
+                        "Reference command (local evidence): git -C `"$repoPath`" rev-list --left-right --count origin/$defaultBranch...upstream/$defaultBranch"
+                    ) -join ' '
+                    Write-InstallerFeedback -Message $repoResult.fork_upstream_alignment.message
+                }
+            }
+
             if (-not $existsBefore -and $Mode -eq 'Install') {
                 $checkoutResult = Invoke-Git -RepoPath $repoPath -Arguments @('checkout', '--detach', $pinnedSha)
                 if ($checkoutResult.ExitCode -ne 0) {
@@ -1719,7 +1769,11 @@ try {
             if ($repoResult.status -eq 'pass') {
                 $repoResult.message = 'Repository satisfies deterministic manifest contract.'
             } else {
-                $repoResult.message = 'Repository violates deterministic manifest contract.'
+                if ($repoResult.issues -contains 'fork_upstream_not_aligned' -and -not [string]::IsNullOrWhiteSpace([string]$repoResult.fork_upstream_alignment.message)) {
+                    $repoResult.message = [string]$repoResult.fork_upstream_alignment.message
+                } else {
+                    $repoResult.message = 'Repository violates deterministic manifest contract.'
+                }
             }
         } catch {
             $repoResult.status = 'fail'
