@@ -82,7 +82,18 @@
       },
       "required_check_rollout": {
         "mode": "stage_then_required",
-        "promotion_condition": "single_green_run"
+        "promotion_condition": "single_green_run",
+        "promotion_state": "staged",
+        "promotion_target_repo": "LabVIEW-Community-CI-CD/labview-cdev-surface",
+        "promotion_target_branch": "main",
+        "promotion_workflow_file": "linux-labview-image-gate.yml",
+        "promotion_required_successes": 1,
+        "promotion_observation_window": 20,
+        "promotion_required_context_tokens": [
+          "linux-labview-image-gate",
+          "Linux LabVIEW Image Gate"
+        ],
+        "fail_closed": true
       }
     },
     "labview_gate": {

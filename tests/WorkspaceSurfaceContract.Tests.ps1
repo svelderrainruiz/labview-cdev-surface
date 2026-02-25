@@ -11,6 +11,7 @@ Describe 'Workspace surface contract' {
         $script:readmePath = Join-Path $script:repoRoot 'README.md'
         $script:assertScriptPath = Join-Path $script:repoRoot 'scripts/Assert-WorkspaceGovernance.ps1'
         $script:policyScriptPath = Join-Path $script:repoRoot 'scripts/Test-PolicyContracts.ps1'
+        $script:linuxGateRequiredPromotionScriptPath = Join-Path $script:repoRoot 'scripts/Test-LinuxGateRequiredPromotion.ps1'
         $script:driftScriptPath = Join-Path $script:repoRoot 'scripts/Test-WorkspaceManifestBranchDrift.ps1'
         $script:pinRefreshScriptPath = Join-Path $script:repoRoot 'scripts/Update-WorkspaceManifestPins.ps1'
         $script:installScriptPath = Join-Path $script:repoRoot 'scripts/Install-WorkspaceFromManifest.ps1'
@@ -58,6 +59,7 @@ Describe 'Workspace surface contract' {
             $script:readmePath,
             $script:assertScriptPath,
             $script:policyScriptPath,
+            $script:linuxGateRequiredPromotionScriptPath,
             $script:driftScriptPath,
             $script:pinRefreshScriptPath,
             $script:installScriptPath,
@@ -158,6 +160,14 @@ Describe 'Workspace surface contract' {
         $script:manifest.installer_contract.container_parity_contract.release_lane_linux_override.'multiarch-2025q3' | Should -Be 'nationalinstruments/labview:2025q3-linux@sha256:9938561c6460841674f9b1871d8562242f51fe9fb72a2c39c66608491edf429c'
         $script:manifest.installer_contract.container_parity_contract.required_check_rollout.mode | Should -Be 'stage_then_required'
         $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_condition | Should -Be 'single_green_run'
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_state | Should -Be 'staged'
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_target_repo | Should -Be 'LabVIEW-Community-CI-CD/labview-cdev-surface'
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_target_branch | Should -Be 'main'
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_workflow_file | Should -Be 'linux-labview-image-gate.yml'
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_required_successes | Should -Be 1
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_observation_window | Should -BeGreaterOrEqual 1
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.fail_closed | Should -BeTrue
+        (@($script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_required_context_tokens) -contains 'linux-labview-image-gate') | Should -BeTrue
         $script:manifest.installer_contract.container_parity_contract.linux_vip_build.enabled | Should -BeTrue
         $script:manifest.installer_contract.container_parity_contract.linux_vip_build.driver | Should -Be 'vipm-cli'
         ((@($script:manifest.installer_contract.container_parity_contract.linux_vip_build.required_ppl_bitness) | ForEach-Object { [string]$_ }) -join ',') | Should -Be '32,64'
@@ -328,6 +338,8 @@ Describe 'Workspace surface contract' {
         $script:ciWorkflowContent | Should -Match 'WorkspaceShaRefreshPrContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'WorkspaceManifestPinRefreshScript\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'LinuxLabviewImageGateWorkflowContract\.Tests\.ps1'
+        $script:ciWorkflowContent | Should -Match 'Test-LinuxGateRequiredPromotion\.ps1'
+        $script:ciWorkflowContent | Should -Match 'Enforce Linux gate promotion fail-closed contract'
         $script:ciWorkflowContent | Should -Match 'IsolatedBuildWorkspacePolicyContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'GitSafeDirectoryPolicyContract\.Tests\.ps1'
         $script:ciWorkflowContent | Should -Match 'ENABLE_SELF_HOSTED_CONTRACTS'

@@ -61,6 +61,20 @@ jobs:
             './tests/WorkspaceInstallerIterationContract.Tests.ps1'
           ) -CI -Output Detailed
 
+      - name: Enforce Linux gate promotion fail-closed contract
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportPath = Join-Path $env:RUNNER_TEMP 'linux-gate-required-promotion-report.json'
+          & pwsh -NoProfile -File "$env:GITHUB_WORKSPACE/scripts/Test-LinuxGateRequiredPromotion.ps1" `
+            -WorkspaceRoot $env:GITHUB_WORKSPACE `
+            -OutputPath $reportPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Linux gate promotion fail-closed contract failed with exit code $LASTEXITCODE."
+          }
+
   workspace-installer-contract:
     name: Workspace Installer Contract
     if: ${{ vars.ENABLE_SELF_HOSTED_CONTRACTS == 'true' }}

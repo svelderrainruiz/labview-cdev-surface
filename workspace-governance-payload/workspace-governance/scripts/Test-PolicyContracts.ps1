@@ -96,6 +96,8 @@ $installerContractMembers = if ($null -ne $installerContract) { @($installerCont
 Add-Check -Scope 'manifest' -Name 'has_installer_contract_reproducibility' -Passed ($installerContractMembers -contains 'reproducibility') -Detail 'installer_contract.reproducibility'
 Add-Check -Scope 'manifest' -Name 'has_installer_contract_provenance' -Passed ($installerContractMembers -contains 'provenance') -Detail 'installer_contract.provenance'
 Add-Check -Scope 'manifest' -Name 'has_installer_contract_canary' -Passed ($installerContractMembers -contains 'canary') -Detail 'installer_contract.canary'
+Add-Check -Scope 'manifest' -Name 'has_installer_contract_cli_bundle' -Passed ($installerContractMembers -contains 'cli_bundle') -Detail 'installer_contract.cli_bundle'
+Add-Check -Scope 'manifest' -Name 'has_installer_contract_harness' -Passed ($installerContractMembers -contains 'harness') -Detail 'installer_contract.harness'
 if ($installerContractMembers -contains 'reproducibility') {
     Add-Check -Scope 'manifest' -Name 'reproducibility_required_true' -Passed ([bool]$manifest.installer_contract.reproducibility.required) -Detail "required=$($manifest.installer_contract.reproducibility.required)"
     Add-Check -Scope 'manifest' -Name 'reproducibility_strict_hash_match_true' -Passed ([bool]$manifest.installer_contract.reproducibility.strict_hash_match) -Detail "strict_hash_match=$($manifest.installer_contract.reproducibility.strict_hash_match)"
@@ -108,6 +110,67 @@ if ($installerContractMembers -contains 'provenance') {
 if ($installerContractMembers -contains 'canary') {
     Add-Check -Scope 'manifest' -Name 'canary_has_schedule' -Passed (-not [string]::IsNullOrWhiteSpace([string]$manifest.installer_contract.canary.schedule_cron_utc)) -Detail ([string]$manifest.installer_contract.canary.schedule_cron_utc)
     Add-Check -Scope 'manifest' -Name 'canary_linux_context' -Passed ([string]$manifest.installer_contract.canary.docker_context -eq 'desktop-linux') -Detail ([string]$manifest.installer_contract.canary.docker_context)
+}
+if ($installerContractMembers -contains 'cli_bundle') {
+    $cliBundle = $manifest.installer_contract.cli_bundle
+    Add-Check -Scope 'manifest' -Name 'cli_bundle_repo' -Passed ([string]$cliBundle.repo -eq 'LabVIEW-Community-CI-CD/labview-cdev-cli') -Detail ([string]$cliBundle.repo)
+    Add-Check -Scope 'manifest' -Name 'cli_bundle_asset_win' -Passed ([string]$cliBundle.asset_win -eq 'cdev-cli-win-x64.zip') -Detail ([string]$cliBundle.asset_win)
+    Add-Check -Scope 'manifest' -Name 'cli_bundle_asset_linux' -Passed ([string]$cliBundle.asset_linux -eq 'cdev-cli-linux-x64.tar.gz') -Detail ([string]$cliBundle.asset_linux)
+    Add-Check -Scope 'manifest' -Name 'cli_bundle_asset_win_sha256' -Passed ([regex]::IsMatch(([string]$cliBundle.asset_win_sha256).ToLowerInvariant(), '^[0-9a-f]{64}$')) -Detail ([string]$cliBundle.asset_win_sha256)
+    Add-Check -Scope 'manifest' -Name 'cli_bundle_asset_linux_sha256' -Passed ([regex]::IsMatch(([string]$cliBundle.asset_linux_sha256).ToLowerInvariant(), '^[0-9a-f]{64}$')) -Detail ([string]$cliBundle.asset_linux_sha256)
+    Add-Check -Scope 'manifest' -Name 'cli_bundle_entrypoint_win' -Passed ([string]$cliBundle.entrypoint_win -eq 'tools\cdev-cli\win-x64\cdev-cli\scripts\Invoke-CdevCli.ps1') -Detail ([string]$cliBundle.entrypoint_win)
+    Add-Check -Scope 'manifest' -Name 'cli_bundle_entrypoint_linux' -Passed ([string]$cliBundle.entrypoint_linux -eq 'tools/cdev-cli/linux-x64/cdev-cli/scripts/Invoke-CdevCli.ps1') -Detail ([string]$cliBundle.entrypoint_linux)
+}
+if ($installerContractMembers -contains 'harness') {
+    $harness = $manifest.installer_contract.harness
+    Add-Check -Scope 'manifest' -Name 'harness_workflow_name' -Passed ([string]$harness.workflow_name -eq 'installer-harness-self-hosted.yml') -Detail ([string]$harness.workflow_name)
+    Add-Check -Scope 'manifest' -Name 'harness_trigger_mode' -Passed ([string]$harness.trigger_mode -eq 'integration_branch_push_and_dispatch') -Detail ([string]$harness.trigger_mode)
+    foreach ($label in @('self-hosted', 'windows', 'self-hosted-windows-lv')) {
+        Add-Check -Scope 'manifest' -Name "harness_runner_label:$label" -Passed (@($harness.runner_labels) -contains $label) -Detail ([string]::Join(',', @($harness.runner_labels)))
+    }
+    foreach ($requiredReport in @('iteration-summary.json', 'exercise-report.json', 'C:\dev-smoke-lvie\artifacts\workspace-install-latest.json', 'lvie-cdev-workspace-installer-bundle.zip', 'harness-validation-report.json')) {
+        Add-Check -Scope 'manifest' -Name "harness_required_report:$requiredReport" -Passed (@($harness.required_reports) -contains $requiredReport) -Detail ([string]::Join(',', @($harness.required_reports)))
+    }
+    foreach ($requiredPostaction in @('ppl_capability_checks.32', 'ppl_capability_checks.64', 'vip_package_build_check')) {
+        Add-Check -Scope 'manifest' -Name "harness_required_postaction:$requiredPostaction" -Passed (@($harness.required_postactions) -contains $requiredPostaction) -Detail ([string]::Join(',', @($harness.required_postactions)))
+    }
+}
+if ($installerContractMembers -contains 'container_parity_contract') {
+    $rollout = $manifest.installer_contract.container_parity_contract.required_check_rollout
+    Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_exists' -Passed ($null -ne $rollout) -Detail 'installer_contract.container_parity_contract.required_check_rollout'
+    if ($null -ne $rollout) {
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_mode' -Passed ([string]$rollout.mode -eq 'stage_then_required') -Detail ([string]$rollout.mode)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_condition' -Passed ([string]$rollout.promotion_condition -eq 'single_green_run') -Detail ([string]$rollout.promotion_condition)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_state' -Passed (([string]$rollout.promotion_state) -in @('staged', 'required')) -Detail ([string]$rollout.promotion_state)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_target_repo' -Passed ([string]$rollout.promotion_target_repo -eq 'LabVIEW-Community-CI-CD/labview-cdev-surface') -Detail ([string]$rollout.promotion_target_repo)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_target_branch' -Passed ([string]$rollout.promotion_target_branch -eq 'main') -Detail ([string]$rollout.promotion_target_branch)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_workflow_file' -Passed ([string]$rollout.promotion_workflow_file -eq 'linux-labview-image-gate.yml') -Detail ([string]$rollout.promotion_workflow_file)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_required_successes' -Passed ([int]$rollout.promotion_required_successes -ge 1) -Detail ([string]$rollout.promotion_required_successes)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_observation_window' -Passed ([int]$rollout.promotion_observation_window -ge [int]$rollout.promotion_required_successes) -Detail "window=$([string]$rollout.promotion_observation_window) required=$([string]$rollout.promotion_required_successes)"
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_fail_closed' -Passed ([bool]$rollout.fail_closed) -Detail ([string]$rollout.fail_closed)
+        $tokens = @($rollout.promotion_required_context_tokens | ForEach-Object { [string]$_ })
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_context_tokens_nonempty' -Passed ($tokens.Count -gt 0) -Detail ([string]::Join(',', $tokens))
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_context_tokens_include_linux_gate' -Passed ($tokens -contains 'linux-labview-image-gate') -Detail ([string]::Join(',', $tokens))
+
+        if (([string]$rollout.promotion_state) -eq 'required') {
+            $targetRepo = @($manifest.managed_repos | Where-Object { [string]$_.required_gh_repo -eq [string]$rollout.promotion_target_repo }) | Select-Object -First 1
+            Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_target_repo_entry_exists' -Passed ($null -ne $targetRepo) -Detail ([string]$rollout.promotion_target_repo)
+            if ($null -ne $targetRepo) {
+                $requiredContexts = @($targetRepo.required_status_checks | ForEach-Object { [string]$_ })
+                $contextMatched = $false
+                foreach ($ctx in $requiredContexts) {
+                    foreach ($token in $tokens) {
+                        if ($ctx -match [regex]::Escape($token)) {
+                            $contextMatched = $true
+                            break
+                        }
+                    }
+                    if ($contextMatched) { break }
+                }
+                Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_required_context_present' -Passed $contextMatched -Detail ([string]::Join(',', $requiredContexts))
+            }
+        }
+    }
 }
 
 $requiredSchemaFields = @(
