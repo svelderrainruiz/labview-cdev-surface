@@ -42,6 +42,11 @@ on:
         required: false
         default: true
         type: boolean
+      allowed_machine_names_csv:
+        description: Comma-separated machine names allowed for this setup (case-insensitive).
+        required: false
+        default: ''
+        type: string
       skip_host_ini_mutation:
         description: Skip host LabVIEW.ini updates during matrix execution.
         required: false
@@ -86,6 +91,7 @@ jobs:
               --arg docker_context "${{ github.event.inputs.docker_context }}" \
               --arg switch_context "${{ github.event.inputs.switch_docker_context }}" \
               --arg startup_docker "${{ github.event.inputs.start_docker_desktop_if_needed }}" \
+              --arg allowed_machine_names_csv "${{ github.event.inputs.allowed_machine_names_csv }}" \
               --arg skip_ini "${{ github.event.inputs.skip_host_ini_mutation }}" \
               --arg skip_override "${{ github.event.inputs.skip_override_phase }}" \
               --arg target_ref "${{ github.event.inputs.ref }}" \
@@ -100,6 +106,7 @@ jobs:
                 docker_context: $docker_context,
                 switch_docker_context: $switch_context,
                 start_docker_desktop_if_needed: $startup_docker,
+                allowed_machine_names_csv: $allowed_machine_names_csv,
                 skip_host_ini_mutation: $skip_ini,
                 skip_override_phase: $skip_override,
                 target_ref: $target_ref
@@ -113,6 +120,7 @@ jobs:
                 docker_context: "desktop-linux",
                 switch_docker_context: "true",
                 start_docker_desktop_if_needed: "true",
+                allowed_machine_names_csv: "GHOST,DESKTOP-6Q81H4O",
                 skip_host_ini_mutation: "true",
                 skip_override_phase: "false",
                 target_ref: ""
@@ -124,6 +132,7 @@ jobs:
                 docker_context: "desktop-windows",
                 switch_docker_context: "true",
                 start_docker_desktop_if_needed: "true",
+                allowed_machine_names_csv: "GHOST",
                 skip_host_ini_mutation: "true",
                 skip_override_phase: "false",
                 target_ref: ""
@@ -199,6 +208,35 @@ jobs:
 
           "metadata_root=$metadataRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "metadata_path=$metadataPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - id: machine-affinity
+        name: Assert setup machine affinity
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $allowedCsv = [string]'${{ matrix.allowed_machine_names_csv }}'
+          $allowedMachines = @(
+            $allowedCsv -split ',' |
+            ForEach-Object { ([string]$_).Trim().ToUpperInvariant() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+          )
+
+          if (@($allowedMachines).Count -eq 0) {
+            throw "allowed_machine_names_csv_empty: setup '${{ matrix.setup_name }}' must provide allowed machine names."
+          }
+
+          $currentMachine = ([string]$env:COMPUTERNAME).Trim().ToUpperInvariant()
+          if ([string]::IsNullOrWhiteSpace($currentMachine)) {
+            throw "current_machine_name_missing: COMPUTERNAME environment variable is empty."
+          }
+
+          if ($allowedMachines -notcontains $currentMachine) {
+            throw ("runner_machine_not_allowed: setup '{0}' allows [{1}] but job ran on '{2}'." -f '${{ matrix.setup_name }}', ($allowedMachines -join ', '), $currentMachine)
+          }
+
+          "allowed_machine_names_csv=$($allowedMachines -join ',')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "current_machine_name=$currentMachine" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - id: machine-preflight
         name: Assert machine preflight pack
@@ -359,6 +397,8 @@ jobs:
             run_attempt = [string]$env:GITHUB_RUN_ATTEMPT
             setup_name = '${{ matrix.setup_name }}'
             runner_name = [string]$env:RUNNER_NAME
+            current_machine_name = '${{ steps.machine-affinity.outputs.current_machine_name }}'
+            allowed_machine_names_csv = '${{ steps.machine-affinity.outputs.allowed_machine_names_csv }}'
             requested_runner_labels_json = '${{ matrix.runner_labels_json }}'
             icon_editor_pinned_sha = '${{ steps.seed-contract.outputs.icon_editor_pinned_sha }}'
             expected_labview_year = '${{ matrix.expected_labview_year }}'
@@ -384,6 +424,8 @@ jobs:
             "",
             "- setup: $($certification.setup_name)",
             "- runner: $($certification.runner_name)",
+            "- machine: $($certification.current_machine_name)",
+            "- allowed machines: $($certification.allowed_machine_names_csv)",
             "- labels: $($certification.requested_runner_labels_json)",
             "- icon-editor pinned sha: $($certification.icon_editor_pinned_sha)",
             "- masscompile status: $($certification.masscompile_status)",
