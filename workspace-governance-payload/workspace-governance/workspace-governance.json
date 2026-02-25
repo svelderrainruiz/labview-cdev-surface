@@ -83,7 +83,7 @@
       "required_check_rollout": {
         "mode": "stage_then_required",
         "promotion_condition": "single_green_run",
-        "promotion_state": "staged",
+        "promotion_state": "required",
         "promotion_target_repo": "LabVIEW-Community-CI-CD/labview-cdev-surface",
         "promotion_target_branch": "main",
         "promotion_workflow_file": "linux-labview-image-gate.yml",
@@ -529,7 +529,8 @@
         "CI Pipeline",
         "Workspace Installer Contract",
         "Reproducibility Contract",
-        "Provenance Contract"
+        "Provenance Contract",
+        "Linux LabVIEW Image Gate"
       ],
       "strict_status_checks": true,
       "required_review_policy": {
@@ -562,7 +563,8 @@
         "CI Pipeline",
         "Workspace Installer Contract",
         "Reproducibility Contract",
-        "Provenance Contract"
+        "Provenance Contract",
+        "Linux LabVIEW Image Gate"
       ],
       "strict_status_checks": true,
       "required_review_policy": {

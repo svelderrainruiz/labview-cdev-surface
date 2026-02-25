@@ -160,7 +160,7 @@ Describe 'Workspace surface contract' {
         $script:manifest.installer_contract.container_parity_contract.release_lane_linux_override.'multiarch-2025q3' | Should -Be 'nationalinstruments/labview:2025q3-linux@sha256:9938561c6460841674f9b1871d8562242f51fe9fb72a2c39c66608491edf429c'
         $script:manifest.installer_contract.container_parity_contract.required_check_rollout.mode | Should -Be 'stage_then_required'
         $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_condition | Should -Be 'single_green_run'
-        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_state | Should -Be 'staged'
+        $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_state | Should -Be 'required'
         $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_target_repo | Should -Be 'LabVIEW-Community-CI-CD/labview-cdev-surface'
         $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_target_branch | Should -Be 'main'
         $script:manifest.installer_contract.container_parity_contract.required_check_rollout.promotion_workflow_file | Should -Be 'linux-labview-image-gate.yml'
@@ -182,6 +182,12 @@ Describe 'Workspace surface contract' {
         $script:manifest.installer_contract.release_build_contracts.'multiarch-2025q3'.required_execution_profile | Should -Be 'host-release'
         $script:manifest.installer_contract.release_build_contracts.'multiarch-2025q3'.artifact_root | Should -Be 'artifacts\release'
         $script:manifest.installer_contract.release_build_contracts.'multiarch-2025q3'.linux_parity_override_image | Should -Be 'nationalinstruments/labview:2025q3-linux@sha256:9938561c6460841674f9b1871d8562242f51fe9fb72a2c39c66608491edf429c'
+        $forkSurfaceRepo = @($script:manifest.managed_repos | Where-Object { [string]$_.required_gh_repo -eq 'svelderrainruiz/labview-cdev-surface' }) | Select-Object -First 1
+        $upstreamSurfaceRepo = @($script:manifest.managed_repos | Where-Object { [string]$_.required_gh_repo -eq 'LabVIEW-Community-CI-CD/labview-cdev-surface' }) | Select-Object -First 1
+        $forkSurfaceRepo | Should -Not -BeNullOrEmpty
+        $upstreamSurfaceRepo | Should -Not -BeNullOrEmpty
+        (@($forkSurfaceRepo.required_status_checks) -contains 'Linux LabVIEW Image Gate') | Should -BeTrue
+        (@($upstreamSurfaceRepo.required_status_checks) -contains 'Linux LabVIEW Image Gate') | Should -BeTrue
         $script:manifest.installer_contract.ppl_capability_proof.command | Should -Be 'runner-cli ppl build'
         ((@($script:manifest.installer_contract.ppl_capability_proof.supported_bitnesses) | ForEach-Object { [string]$_ }) -join ',') | Should -Be '32,64'
         $script:manifest.installer_contract.vip_capability_proof.command | Should -Be 'runner-cli vip build'

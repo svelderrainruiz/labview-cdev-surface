@@ -141,7 +141,7 @@ if ($installerContractMembers -contains 'container_parity_contract') {
     if ($null -ne $rollout) {
         Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_mode' -Passed ([string]$rollout.mode -eq 'stage_then_required') -Detail ([string]$rollout.mode)
         Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_condition' -Passed ([string]$rollout.promotion_condition -eq 'single_green_run') -Detail ([string]$rollout.promotion_condition)
-        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_state' -Passed (([string]$rollout.promotion_state) -in @('staged', 'required')) -Detail ([string]$rollout.promotion_state)
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_state' -Passed ([string]$rollout.promotion_state -eq 'required') -Detail ([string]$rollout.promotion_state)
         Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_target_repo' -Passed ([string]$rollout.promotion_target_repo -eq 'LabVIEW-Community-CI-CD/labview-cdev-surface') -Detail ([string]$rollout.promotion_target_repo)
         Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_target_branch' -Passed ([string]$rollout.promotion_target_branch -eq 'main') -Detail ([string]$rollout.promotion_target_branch)
         Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_workflow_file' -Passed ([string]$rollout.promotion_workflow_file -eq 'linux-labview-image-gate.yml') -Detail ([string]$rollout.promotion_workflow_file)
@@ -152,23 +152,21 @@ if ($installerContractMembers -contains 'container_parity_contract') {
         Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_context_tokens_nonempty' -Passed ($tokens.Count -gt 0) -Detail ([string]::Join(',', $tokens))
         Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_context_tokens_include_linux_gate' -Passed ($tokens -contains 'linux-labview-image-gate') -Detail ([string]::Join(',', $tokens))
 
-        if (([string]$rollout.promotion_state) -eq 'required') {
-            $targetRepo = @($manifest.managed_repos | Where-Object { [string]$_.required_gh_repo -eq [string]$rollout.promotion_target_repo }) | Select-Object -First 1
-            Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_target_repo_entry_exists' -Passed ($null -ne $targetRepo) -Detail ([string]$rollout.promotion_target_repo)
-            if ($null -ne $targetRepo) {
-                $requiredContexts = @($targetRepo.required_status_checks | ForEach-Object { [string]$_ })
-                $contextMatched = $false
-                foreach ($ctx in $requiredContexts) {
-                    foreach ($token in $tokens) {
-                        if ($ctx -match [regex]::Escape($token)) {
-                            $contextMatched = $true
-                            break
-                        }
+        $targetRepo = @($manifest.managed_repos | Where-Object { [string]$_.required_gh_repo -eq [string]$rollout.promotion_target_repo }) | Select-Object -First 1
+        Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_target_repo_entry_exists' -Passed ($null -ne $targetRepo) -Detail ([string]$rollout.promotion_target_repo)
+        if ($null -ne $targetRepo) {
+            $requiredContexts = @($targetRepo.required_status_checks | ForEach-Object { [string]$_ })
+            $contextMatched = $false
+            foreach ($ctx in $requiredContexts) {
+                foreach ($token in $tokens) {
+                    if ($ctx -match [regex]::Escape($token)) {
+                        $contextMatched = $true
+                        break
                     }
-                    if ($contextMatched) { break }
                 }
-                Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_required_context_present' -Passed $contextMatched -Detail ([string]::Join(',', $requiredContexts))
+                if ($contextMatched) { break }
             }
+            Add-Check -Scope 'manifest' -Name 'linux_gate_rollout_required_context_present' -Passed $contextMatched -Detail ([string]::Join(',', $requiredContexts))
         }
     }
 }
