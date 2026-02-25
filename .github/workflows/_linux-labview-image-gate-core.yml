@@ -226,6 +226,82 @@ jobs:
             echo "- windows_vip_headless_required: \`$windows_vip_headless_required\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  linux-parity-prep:
+    name: Linux Parity Prep (parallel to Windows shutdown)
+    needs: [resolve-parity-context]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare Linux parity image context with bounded timeout
+        shell: bash
+        env:
+          LINUX_PARITY_IMAGE: ${{ needs.resolve-parity-context.outputs.lvcontainer_linux_image }}
+          LINUX_PARITY_TAG: ${{ needs.resolve-parity-context.outputs.lvcontainer_linux_tag }}
+        run: |
+          set -euo pipefail
+
+          artifact_root="$GITHUB_WORKSPACE/artifacts/linux-image-gate/parity/linux-prep"
+          mkdir -p "$artifact_root"
+          log_path="$artifact_root/linux-parity-prep.log"
+          report_path="$artifact_root/linux-parity-prep-report.json"
+
+          image="${LINUX_PARITY_IMAGE}"
+          if [[ -z "$image" ]]; then
+            echo "Resolved Linux parity image is empty." >&2
+            exit 1
+          fi
+
+          timeout_minutes=30
+          status='pass'
+          reason='none'
+          set +e
+          timeout --preserve-status "${timeout_minutes}m" docker pull "$image" >"$log_path" 2>&1
+          pull_exit=$?
+          set -e
+          if [[ "$pull_exit" -ne 0 ]]; then
+            status='fail'
+            reason='linux_prep_pull_failed'
+            if [[ "$pull_exit" -eq 124 ]]; then
+              reason='linux_prep_pull_timeout'
+            fi
+          fi
+
+          cat > "$report_path" <<JSON
+          {
+            "status": "$status",
+            "reason": "$reason",
+            "docker_image": "$image",
+            "lvcontainer_linux_tag": "$LINUX_PARITY_TAG",
+            "pull_exit_code": $pull_exit,
+            "timeout_minutes": $timeout_minutes
+          }
+          JSON
+
+          if [[ "$status" != 'pass' ]]; then
+            echo "Linux parity prep failed: reason=$reason exit_code=$pull_exit" >&2
+            exit 1
+          fi
+
+      - name: Upload Linux parity prep artifacts (attempt 1)
+        if: always()
+        id: upload_linux_parity_prep_artifacts_attempt_1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-labview-image-gate-prep-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/parity/linux-prep
+          if-no-files-found: error
+
+      - name: Upload Linux parity prep artifacts (attempt 2)
+        if: always() && steps.upload_linux_parity_prep_artifacts_attempt_1.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-labview-image-gate-prep-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/parity/linux-prep
+          if-no-files-found: error
+
   windows-host-ppl-32:
     name: Windows Host PPL Prerequisite (32-bit)
     needs: [resolve-parity-context]
@@ -516,6 +592,45 @@ jobs:
           $snapshotPath = Join-Path $artifactRoot 'lv_icon_x86.lvlibp'
           Copy-Item -LiteralPath $builtPplPath -Destination $snapshotPath -Force
 
+          $shutdownLockReportPath = Join-Path $artifactRoot 'windows-shutdown-lock-check.json'
+          $labviewProcesses = @(
+            Get-Process -Name 'LabVIEW' -ErrorAction SilentlyContinue |
+              Select-Object Id, ProcessName, Path
+          )
+          $shutdownStatus = 'pass'
+          $shutdownReason = 'none'
+          $lockProbePath = $builtPplPath
+          $lockProbeAcquired = $true
+          try {
+            $lockStream = [System.IO.File]::Open($lockProbePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            $lockStream.Dispose()
+          } catch {
+            $lockProbeAcquired = $false
+            $shutdownStatus = 'fail'
+            $shutdownReason = 'file_lock_detected'
+          }
+          if ($labviewProcesses.Count -gt 0) {
+            $shutdownStatus = 'fail'
+            if ($shutdownReason -eq 'none') {
+              $shutdownReason = 'labview_process_still_running'
+            }
+            else {
+              $shutdownReason = "$shutdownReason;labview_process_still_running"
+            }
+          }
+          [ordered]@{
+            status = $shutdownStatus
+            reason = $shutdownReason
+            labview_process_count = $labviewProcesses.Count
+            labview_processes = @($labviewProcesses)
+            lock_probe_path = $lockProbePath
+            lock_probe_acquired = $lockProbeAcquired
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $shutdownLockReportPath -Encoding utf8
+          if ($shutdownStatus -ne 'pass') {
+            throw "windows_shutdown_lock_check_failed: lane=windows-host-ppl-32 reason=$shutdownReason"
+          }
+
           [ordered]@{
             status = 'pass'
             gate_lane = 'windows-host-ppl-32'
@@ -529,6 +644,8 @@ jobs:
             isolated_job_root = $isolatedJobRoot
             isolated_repos_root = $isolatedReposRoot
             source_repo_pinned_sha = $repoPinnedSha
+            windows_shutdown_lock_check = $shutdownStatus
+            windows_shutdown_lock_report = $shutdownLockReportPath
             timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
           } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $artifactRoot 'windows-host-ppl-32-report.json') -Encoding utf8
 
@@ -858,6 +975,45 @@ jobs:
           $snapshotPath = Join-Path $artifactRoot 'lv_icon_x64.lvlibp'
           Copy-Item -LiteralPath $builtPplPath -Destination $snapshotPath -Force
 
+          $shutdownLockReportPath = Join-Path $artifactRoot 'windows-shutdown-lock-check.json'
+          $labviewProcesses = @(
+            Get-Process -Name 'LabVIEW' -ErrorAction SilentlyContinue |
+              Select-Object Id, ProcessName, Path
+          )
+          $shutdownStatus = 'pass'
+          $shutdownReason = 'none'
+          $lockProbePath = $builtPplPath
+          $lockProbeAcquired = $true
+          try {
+            $lockStream = [System.IO.File]::Open($lockProbePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            $lockStream.Dispose()
+          } catch {
+            $lockProbeAcquired = $false
+            $shutdownStatus = 'fail'
+            $shutdownReason = 'file_lock_detected'
+          }
+          if ($labviewProcesses.Count -gt 0) {
+            $shutdownStatus = 'fail'
+            if ($shutdownReason -eq 'none') {
+              $shutdownReason = 'labview_process_still_running'
+            }
+            else {
+              $shutdownReason = "$shutdownReason;labview_process_still_running"
+            }
+          }
+          [ordered]@{
+            status = $shutdownStatus
+            reason = $shutdownReason
+            labview_process_count = $labviewProcesses.Count
+            labview_processes = @($labviewProcesses)
+            lock_probe_path = $lockProbePath
+            lock_probe_acquired = $lockProbeAcquired
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $shutdownLockReportPath -Encoding utf8
+          if ($shutdownStatus -ne 'pass') {
+            throw "windows_shutdown_lock_check_failed: lane=windows-host-ppl-64 reason=$shutdownReason"
+          }
+
           [ordered]@{
             status = 'pass'
             gate_lane = 'windows-host-ppl-64'
@@ -871,6 +1027,8 @@ jobs:
             isolated_job_root = $isolatedJobRoot
             isolated_repos_root = $isolatedReposRoot
             source_repo_pinned_sha = $repoPinnedSha
+            windows_shutdown_lock_check = $shutdownStatus
+            windows_shutdown_lock_report = $shutdownLockReportPath
             timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
           } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $artifactRoot 'windows-host-ppl-64-report.json') -Encoding utf8
 
@@ -912,11 +1070,51 @@ jobs:
 
   linux-parity-projectspec-via-container:
     name: Linux Parity Project-Spec + VI Analyzer (${{ needs.resolve-parity-context.outputs.lvcontainer_raw }} | ${{ needs.resolve-parity-context.outputs.build_spec_marker }})
-    needs: [resolve-parity-context]
+    needs: [resolve-parity-context, linux-parity-prep, windows-host-ppl-32, windows-host-ppl-64]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download x86 Windows prerequisite artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-32-${{ github.run_id }}
+          path: ${{ runner.temp }}/linux-gate/windows-ppl-32
+
+      - name: Download x64 Windows prerequisite artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-64-${{ github.run_id }}
+          path: ${{ runner.temp }}/linux-gate/windows-ppl-64
+
+      - name: Verify Windows shutdown and file-lock contract before Linux execution
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          report32="${RUNNER_TEMP}/linux-gate/windows-ppl-32/windows-shutdown-lock-check.json"
+          report64="${RUNNER_TEMP}/linux-gate/windows-ppl-64/windows-shutdown-lock-check.json"
+
+          [[ -f "$report32" ]] || { echo "Missing shutdown/lock report: $report32" >&2; exit 1; }
+          [[ -f "$report64" ]] || { echo "Missing shutdown/lock report: $report64" >&2; exit 1; }
+
+          status32="$(jq -r '.status // "fail"' "$report32")"
+          status64="$(jq -r '.status // "fail"' "$report64")"
+          reason32="$(jq -r '.reason // "unknown"' "$report32")"
+          reason64="$(jq -r '.reason // "unknown"' "$report64")"
+
+          {
+            echo "## Windows Shutdown + Lock Check"
+            echo ""
+            echo "- windows-host-ppl-32: status=\`$status32\` reason=\`$reason32\`"
+            echo "- windows-host-ppl-64: status=\`$status64\` reason=\`$reason64\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$status32" != 'pass' || "$status64" != 'pass' ]]; then
+            echo "windows_shutdown_lock_check_failed: status32=$status32 reason32=$reason32 status64=$status64 reason64=$reason64" >&2
+            exit 1
+          fi
 
       - name: Run Linux parity container with bounded checkpoints
         shell: bash
@@ -1472,7 +1670,7 @@ jobs:
   gate-summary:
     name: Linux Gate Summary
     if: always()
-    needs: [windows-host-ppl-32, windows-host-ppl-64, linux-parity-projectspec-via-container, linux-hosted-ppl-64, windows-host-vip-build]
+    needs: [linux-parity-prep, windows-host-ppl-32, windows-host-ppl-64, linux-parity-projectspec-via-container, linux-hosted-ppl-64, windows-host-vip-build]
     runs-on: ubuntu-latest
     outputs:
       gate_status: ${{ steps.evaluate.outputs.gate_status }}
@@ -1484,6 +1682,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          prep_result='${{ needs.linux-parity-prep.result }}'
           ppl32_result='${{ needs.windows-host-ppl-32.result }}'
           ppl64_result='${{ needs.windows-host-ppl-64.result }}'
           projectspec_result='${{ needs.linux-parity-projectspec-via-container.result }}'
@@ -1491,7 +1690,7 @@ jobs:
           vip_result='${{ needs.windows-host-vip-build.result }}'
 
           gate_status='fail'
-          if [[ "$ppl32_result" == 'success' && "$ppl64_result" == 'success' && "$projectspec_result" == 'success' && "$vip_result" == 'success' ]]; then
+          if [[ "$prep_result" == 'success' && "$ppl32_result" == 'success' && "$ppl64_result" == 'success' && "$projectspec_result" == 'success' && "$vip_result" == 'success' ]]; then
             gate_status='pass'
           fi
 
@@ -1502,6 +1701,7 @@ jobs:
           {
             echo "## Linux Gate Summary"
             echo ""
+            echo "- Linux parity prep lane: $prep_result"
             echo "- Windows host PPL 32 prerequisite: $ppl32_result"
             echo "- Windows host PPL 64 prerequisite: $ppl64_result"
             echo "- Linux parity project-spec lane: $projectspec_result"

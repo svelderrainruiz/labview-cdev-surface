@@ -25,8 +25,9 @@ Describe 'Linux LabVIEW image gate workflow contract' {
         $script:wrapperWorkflowContent | Should -Match 'uses:\s*\./\.github/workflows/_linux-labview-image-gate-core\.yml'
     }
 
-    It 'defines resolve, windows prerequisites, hosted linux ppl signal lane, linux parity, windows vip blocking lane, and summary lanes' {
+    It 'defines resolve, linux prep, windows prerequisites, hosted linux ppl signal lane, linux parity, windows vip blocking lane, and summary lanes' {
         $script:coreWorkflowContent | Should -Match '(?m)^\s*resolve-parity-context:\s*$'
+        $script:coreWorkflowContent | Should -Match '(?m)^\s*linux-parity-prep:\s*$'
         $script:coreWorkflowContent | Should -Match '(?m)^\s*windows-host-ppl-32:\s*$'
         $script:coreWorkflowContent | Should -Match '(?m)^\s*windows-host-ppl-64:\s*$'
         $script:coreWorkflowContent | Should -Match '(?m)^\s*linux-hosted-ppl-64:\s*$'
@@ -41,8 +42,9 @@ Describe 'Linux LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Not -Match '(?ms)windows-host-ppl-64:\s*.*?runs-on:\s*\[[^\]]*user-session'
         $script:coreWorkflowContent | Should -Not -Match '(?ms)windows-host-vip-build:\s*.*?runs-on:\s*\[[^\]]*user-session'
         $script:coreWorkflowContent | Should -Match 'needs:\s*\[resolve-parity-context\]'
+        $script:coreWorkflowContent | Should -Match 'needs:\s*\[resolve-parity-context,\s*linux-parity-prep,\s*windows-host-ppl-32,\s*windows-host-ppl-64\]'
         $script:coreWorkflowContent | Should -Match 'needs:\s*\[resolve-parity-context,\s*windows-host-ppl-32,\s*windows-host-ppl-64,\s*linux-hosted-ppl-64\]'
-        $script:coreWorkflowContent | Should -Match 'needs:\s*\[windows-host-ppl-32,\s*windows-host-ppl-64,\s*linux-parity-projectspec-via-container,\s*linux-hosted-ppl-64,\s*windows-host-vip-build\]'
+        $script:coreWorkflowContent | Should -Match 'needs:\s*\[linux-parity-prep,\s*windows-host-ppl-32,\s*windows-host-ppl-64,\s*linux-parity-projectspec-via-container,\s*linux-hosted-ppl-64,\s*windows-host-vip-build\]'
     }
 
     It 'enforces isolated windows prerequisite workspaces with deterministic cleanup' {
@@ -65,6 +67,9 @@ Describe 'Linux LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Match 'repo-provisioning\.labview-icon-editor\.json'
         $script:coreWorkflowContent | Should -Match 'runner-cli-invocation\.json'
         $script:coreWorkflowContent | Should -Match 'runner-headless-check\.json'
+        $script:coreWorkflowContent | Should -Match 'windows-shutdown-lock-check\.json'
+        $script:coreWorkflowContent | Should -Match 'windows_shutdown_lock_check_failed'
+        $script:coreWorkflowContent | Should -Match 'Verify Windows shutdown and file-lock contract before Linux execution'
         $script:coreWorkflowContent | Should -Match '(?ms)windows-host-ppl-32:\s*.*?runner_not_headless'
         $script:coreWorkflowContent | Should -Match '(?ms)windows-host-ppl-64:\s*.*?runner_not_headless'
         $script:coreWorkflowContent | Should -Match 'if:\s*always\(\)'
@@ -135,6 +140,7 @@ Describe 'Linux LabVIEW image gate workflow contract' {
         $script:coreWorkflowContent | Should -Match 'windows-host-vip-report\.json'
         $script:coreWorkflowContent | Should -Match 'Linux hosted PPL x64 signal lane failed'
         $script:coreWorkflowContent | Should -Match 'Windows host VIP lane failed\. This is blocking for Linux gate'
+        $script:coreWorkflowContent | Should -Match 'Linux parity prep lane'
         $script:coreWorkflowContent | Should -Match 'Linux Gate Summary'
     }
 }
