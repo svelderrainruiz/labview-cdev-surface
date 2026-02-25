@@ -13,10 +13,11 @@ Describe 'Installer harness workflow contract' {
         $script:workflowContent = Get-Content -LiteralPath $script:workflowPath -Raw
     }
 
-    It 'triggers on integration branches and workflow dispatch' {
+    It 'triggers on integration branches, pull requests, and workflow dispatch' {
         $script:workflowContent | Should -Match 'name:\s*Installer Harness'
         $script:workflowContent | Should -Match 'push:'
         $script:workflowContent | Should -Match 'integration/\*\*'
+        $script:workflowContent | Should -Match 'pull_request:'
         $script:workflowContent | Should -Match 'workflow_dispatch:'
         $script:workflowContent | Should -Match 'ref:'
     }

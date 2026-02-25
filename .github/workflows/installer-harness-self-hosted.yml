@@ -1,6 +1,9 @@
 name: Installer Harness
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - integration/**

@@ -3,10 +3,10 @@
 
 $ErrorActionPreference = 'Stop'
 
-Describe 'Release with Windows gate workflow contract' {
+Describe 'Release with Linux gate workflow contract' {
     BeforeAll {
         $script:repoRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..')).Path
-        $script:workflowPath = Join-Path $script:repoRoot '.github/workflows/release-with-windows-gate.yml'
+        $script:workflowPath = Join-Path $script:repoRoot '.github/workflows/release-with-linux-gate.yml'
         if (-not (Test-Path -LiteralPath $script:workflowPath -PathType Leaf)) {
             throw "Release orchestrator workflow missing: $script:workflowPath"
         }
@@ -28,13 +28,11 @@ Describe 'Release with Windows gate workflow contract' {
 
     It 'contains repo guard, hard gate ordering, and reusable workflow chaining' {
         $script:workflowContent | Should -Match "expectedRepo = 'LabVIEW-Community-CI-CD/labview-cdev-surface'"
-        $script:workflowContent | Should -Match 'windows_gate:'
         $script:workflowContent | Should -Match 'linux_gate:'
         $script:workflowContent | Should -Match 'needs:\s*\[repo_guard\]'
-        $script:workflowContent | Should -Match 'uses:\s*\./\.github/workflows/_windows-labview-image-gate-core\.yml'
         $script:workflowContent | Should -Match 'uses:\s*\./\.github/workflows/_linux-labview-image-gate-core\.yml'
         $script:workflowContent | Should -Match 'gate_policy:'
-        $script:workflowContent | Should -Match 'needs:\s*\[repo_guard,\s*windows_gate,\s*linux_gate\]'
+        $script:workflowContent | Should -Match 'needs:\s*\[repo_guard,\s*linux_gate\]'
         $script:workflowContent | Should -Match 'if:\s*\$\{\{\s*always\(\)\s*\}\}'
         $script:workflowContent | Should -Match 'release_publish:'
         $script:workflowContent | Should -Match 'needs:\s*\[gate_policy\]'
@@ -43,12 +41,12 @@ Describe 'Release with Windows gate workflow contract' {
 
     It 'enforces hard block and controlled override metadata requirements' {
         $script:workflowContent | Should -Match 'Repository guard did not succeed'
-        $script:workflowContent | Should -Match 'One or more gates failed and override is not enabled'
+        $script:workflowContent | Should -Match 'Linux gate failed and override is not enabled'
         $script:workflowContent | Should -Match 'allow_gate_override=true requires non-empty override_reason'
         $script:workflowContent | Should -Match 'allow_gate_override=true requires override_incident_url'
         $script:workflowContent | Should -Match 'overrideIncidentUrl -notmatch'
         $script:workflowContent | Should -Match 'GitHub issue/discussion URL'
-        $script:workflowContent | Should -Match '::warning::One or more gates failed but controlled override is active'
+        $script:workflowContent | Should -Match '::warning::Linux gate failed but controlled override is active'
     }
 
     It 'defines non-canceling release-tag concurrency' {

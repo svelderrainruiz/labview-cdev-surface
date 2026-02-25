@@ -36,10 +36,8 @@ Describe 'Workspace surface contract' {
         $script:integrationGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/integration-gate.yml'
         $script:installerHarnessWorkflowPath = Join-Path $script:repoRoot '.github/workflows/installer-harness-self-hosted.yml'
         $script:releaseCoreWorkflowPath = Join-Path $script:repoRoot '.github/workflows/_release-workspace-installer-core.yml'
-        $script:releaseWithGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/release-with-windows-gate.yml'
+        $script:releaseWithGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/release-with-linux-gate.yml'
         $script:canaryWorkflowPath = Join-Path $script:repoRoot '.github/workflows/nightly-supplychain-canary.yml'
-        $script:windowsImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/windows-labview-image-gate.yml'
-        $script:windowsImageGateCoreWorkflowPath = Join-Path $script:repoRoot '.github/workflows/_windows-labview-image-gate-core.yml'
         $script:linuxImageGateWorkflowPath = Join-Path $script:repoRoot '.github/workflows/linux-labview-image-gate.yml'
         $script:linuxImageGateCoreWorkflowPath = Join-Path $script:repoRoot '.github/workflows/_linux-labview-image-gate-core.yml'
         $script:globalJsonPath = Join-Path $script:repoRoot 'global.json'
@@ -87,8 +85,6 @@ Describe 'Workspace surface contract' {
             $script:releaseCoreWorkflowPath,
             $script:releaseWithGateWorkflowPath,
             $script:canaryWorkflowPath,
-            $script:windowsImageGateWorkflowPath,
-            $script:windowsImageGateCoreWorkflowPath,
             $script:linuxImageGateWorkflowPath,
             $script:linuxImageGateCoreWorkflowPath,
             $script:globalJsonPath,
@@ -345,7 +341,6 @@ Describe 'Workspace surface contract' {
         $script:releaseCoreWorkflowContent | Should -Match 'workspace-installer\.spdx\.json'
         $script:releaseCoreWorkflowContent | Should -Match 'workspace-installer\.slsa\.json'
         $script:releaseWithGateWorkflowContent | Should -Match 'allow_gate_override:'
-        $script:releaseWithGateWorkflowContent | Should -Match 'uses:\s*\./\.github/workflows/_windows-labview-image-gate-core\.yml'
         $script:releaseWithGateWorkflowContent | Should -Match 'uses:\s*\./\.github/workflows/_linux-labview-image-gate-core\.yml'
     }
 }

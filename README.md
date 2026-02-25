@@ -199,7 +199,7 @@ If Docker Desktop cannot start, verify Windows virtualization features are enabl
 ## Publish Release (Automated Gate)
 
 Use manual workflow dispatch for release publication:
-1. Run `.github/workflows/release-with-windows-gate.yml`.
+1. Run `.github/workflows/release-with-linux-gate.yml`.
 2. Provide a new `release_tag` in semantic format (for example, `v0.1.1`).
 3. Keep `allow_existing_tag=false` (default). Set `true` only for break-glass overwrite operations.
 4. Set `prerelease` as needed.
@@ -245,7 +245,7 @@ On failure, it updates a single tracking issue (`Nightly Supply-Chain Canary Fai
 
 ## Windows LabVIEW image gate
 
-`windows-labview-image-gate.yml` is dispatch-only and wraps `./.github/workflows/_windows-labview-image-gate-core.yml` for standalone diagnostics.  
+`linux-labview-image-gate.yml` is dispatch-only and wraps `./.github/workflows/_linux-labview-image-gate-core.yml` for standalone diagnostics.  
 The core gate requires the runner to already be in Windows container mode (non-interactive CI does not switch Docker engine), validates host/image OS-version compatibility via `docker manifest inspect --verbose`, then pulls `nationalinstruments/labview:2026q1-windows` by default (override with repo variable `LABVIEW_WINDOWS_IMAGE`), installs the NSIS workspace installer in-container, runs bundled `runner-cli ppl build` and `runner-cli vip build`, and verifies PPL + VIP output presence.
 The core gate is pinned to dedicated labels so it runs only on the intended user-session runner lane: `self-hosted`, `windows`, `self-hosted-windows-lv`, `windows-containers`, `user-session`, `cdev-surface-windows-gate`.
 Isolation behavior is controlled by `LABVIEW_WINDOWS_DOCKER_ISOLATION`:

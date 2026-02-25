@@ -44,9 +44,9 @@ Build and gate lanes must run in isolated workspaces on every run (`D:\dev` pref
 - If automation cannot create or merge the PR due to platform outage, manual refresh is fallback.
 
 ## Installer Release Contract
-- Primary release publish path is `.github/workflows/release-with-windows-gate.yml`.
-- `release-with-windows-gate.yml` must run `repo_guard` and fail outside `LabVIEW-Community-CI-CD/labview-cdev-surface`.
-- `release-with-windows-gate.yml` must run Windows acceptance via `./.github/workflows/_windows-labview-image-gate-core.yml` before publish.
+- Primary release publish path is `.github/workflows/release-with-linux-gate.yml`.
+- `release-with-linux-gate.yml` must run `repo_guard` and fail outside `LabVIEW-Community-CI-CD/labview-cdev-surface`.
+- `release-with-linux-gate.yml` must run Linux acceptance via `./.github/workflows/_linux-labview-image-gate-core.yml` before publish.
 - Windows gate runners must be preconfigured in Windows container mode; do not rely on interactive Docker engine switching in CI.
 - Build workspace isolation policy is mandatory for gate/build lanes:
   - always-isolated
@@ -72,7 +72,7 @@ Build and gate lanes must run in isolated workspaces on every run (`D:\dev` pref
   - Report these explicit fields in troubleshooting output: `features_enabled`, `reboot_pending`, `docker_daemon_ready`.
 - Override path must emit explicit warning summary and append override disclosure to release notes.
 - `.github/workflows/release-workspace-installer.yml` is retained as a dispatch wrapper for diagnostics/fallback and must call `./.github/workflows/_release-workspace-installer-core.yml`.
-- `.github/workflows/windows-labview-image-gate.yml` is retained as a dispatch wrapper for diagnostics/fallback and must call `./.github/workflows/_windows-labview-image-gate-core.yml`.
+- `.github/workflows/linux-labview-image-gate.yml` is retained as a dispatch wrapper for diagnostics/fallback and must call `./.github/workflows/_linux-labview-image-gate-core.yml`.
 - Publishing mode is manual dispatch only with explicit semantic tag input (`v<major>.<minor>.<patch>`).
 - Release tags are immutable by default: existing tags must fail publication unless `allow_existing_tag=true` is explicitly set for break-glass recovery.
 - Release creation must bind tag creation to the exact workflow commit SHA (`github.sha`), not a moving branch target.
