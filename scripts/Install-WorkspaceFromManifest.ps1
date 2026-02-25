@@ -20,6 +20,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -ErrorAction SilentlyContinue)) {
+    # Keep native command stderr lines as output so git progress does not fail the installer under pwsh.
+    $global:PSNativeCommandUseErrorActionPreference = $false
+}
 
 function Ensure-Directory {
     param(
@@ -1590,13 +1594,15 @@ try {
                         if ($LASTEXITCODE -ne 0) {
                             throw "Failed to add remote '$remoteName' on '$repoPath'. $([string]::Join("`n", @($addOutput)))"
                         }
-                        $afterUrl = (& git -C $repoPath remote get-url $remoteName).Trim()
+                        $afterUrlRaw = & git -C $repoPath remote get-url $remoteName 2>$null
+                        $afterExit = $LASTEXITCODE
+                        $afterUrl = if ($afterExit -eq 0) { [string]$afterUrlRaw.Trim() } else { '' }
                         $remoteCheck.after = $afterUrl
-                        if ((Normalize-Url $afterUrl) -eq (Normalize-Url $expectedUrl)) {
+                        if ($afterExit -eq 0 -and (Normalize-Url $afterUrl) -eq (Normalize-Url $expectedUrl)) {
                             $remoteCheck.status = 'added'
                         } else {
                             $remoteCheck.status = 'add_mismatch'
-                            $remoteCheck.message = 'Added remote URL does not match expected value.'
+                            $remoteCheck.message = if ($afterExit -eq 0) { 'Added remote URL does not match expected value.' } else { 'Added remote could not be read back.' }
                             $repoResult.status = 'fail'
                             $repoResult.issues += "remote_add_mismatch_$remoteName"
                         }
@@ -1612,13 +1618,15 @@ try {
                         if ($LASTEXITCODE -ne 0) {
                             throw "Failed to set remote '$remoteName' on '$repoPath'. $([string]::Join("`n", @($setOutput)))"
                         }
-                        $afterUrl = (& git -C $repoPath remote get-url $remoteName).Trim()
+                        $afterUrlRaw = & git -C $repoPath remote get-url $remoteName 2>$null
+                        $afterExit = $LASTEXITCODE
+                        $afterUrl = if ($afterExit -eq 0) { [string]$afterUrlRaw.Trim() } else { '' }
                         $remoteCheck.after = $afterUrl
-                        if ((Normalize-Url $afterUrl) -eq (Normalize-Url $expectedUrl)) {
+                        if ($afterExit -eq 0 -and (Normalize-Url $afterUrl) -eq (Normalize-Url $expectedUrl)) {
                             $remoteCheck.status = 'updated'
                         } else {
                             $remoteCheck.status = 'update_mismatch'
-                            $remoteCheck.message = 'Updated remote URL does not match expected value.'
+                            $remoteCheck.message = if ($afterExit -eq 0) { 'Updated remote URL does not match expected value.' } else { 'Updated remote could not be read back.' }
                             $repoResult.status = 'fail'
                             $repoResult.issues += "remote_update_mismatch_$remoteName"
                         }
