@@ -62,7 +62,7 @@ jobs:
 
           $reportPath = Join-Path $env:RUNNER_TEMP 'installer-harness/runner-baseline-report.json'
           & pwsh -NoProfile -File ./scripts/Assert-InstallerHarnessRunnerBaseline.ps1 `
-            -Repository 'LabVIEW-Community-CI-CD/labview-cdev-surface' `
+            -Repository '${{ github.repository }}' `
             -RunnerRoots @($activeRunnerRoot) `
             -AllowInteractiveRunner `
             -OutputPath $reportPath
