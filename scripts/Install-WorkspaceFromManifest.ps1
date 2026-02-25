@@ -379,7 +379,9 @@ function Test-PplBuildLabVIEWVersionAlignment {
         [Parameter(Mandatory = $true)]
         [string]$RequiredLabviewYear,
         [Parameter()]
-        [string[]]$PreExistingExecuteBuildSpecLogs = @()
+        [string[]]$PreExistingExecuteBuildSpecLogs = @(),
+        [Parameter()]
+        [string]$ExecutionOutputText = ''
     )
 
     $result = [ordered]@{
@@ -401,7 +403,31 @@ function Test-PplBuildLabVIEWVersionAlignment {
             Sort-Object -Property LastWriteTimeUtc -Descending
         )
         if (@($allLogs).Count -eq 0) {
-            throw "No LabVIEW CLI execute-buildspec logs were found in '$logsRoot'."
+            $fallbackExecutable = ''
+            $fallbackYear = ''
+            if (-not [string]::IsNullOrWhiteSpace($ExecutionOutputText)) {
+                if ($ExecutionOutputText -match 'Using LabVIEW:\s*"([^"]+)"') {
+                    $fallbackExecutable = [string]$Matches[1]
+                    $fallbackYear = Get-LabVIEWYearFromText -Text $fallbackExecutable
+                }
+                if ([string]::IsNullOrWhiteSpace($fallbackYear)) {
+                    $fallbackYear = Get-LabVIEWYearFromText -Text $ExecutionOutputText
+                }
+            }
+
+            if ([string]::IsNullOrWhiteSpace($fallbackYear)) {
+                throw "No LabVIEW CLI execute-buildspec logs were found in '$logsRoot'."
+            }
+
+            $result.detected_labview_executable = $fallbackExecutable
+            $result.detected_labview_year = $fallbackYear
+            if ([string]$fallbackYear -ne [string]$RequiredLabviewYear) {
+                throw "Illegal combination: PPL build executed with LabVIEW $fallbackYear while VIP/package target requires LabVIEW $RequiredLabviewYear."
+            }
+
+            $result.status = 'pass'
+            $result.message = "PPL build executed with LabVIEW $fallbackYear (inferred from runner-cli output), matching required year $RequiredLabviewYear."
+            return [pscustomobject]$result
         }
 
         $normalizedPreviousLogs = @($PreExistingExecuteBuildSpecLogs | ForEach-Object { ([string]$_).ToLowerInvariant() })
@@ -760,7 +786,10 @@ function Invoke-RunnerCliPplCapabilityCheck {
         )
         $result.command = @($commandArgs)
 
-        & $RunnerCliPath @commandArgs | ForEach-Object { Write-Host $_ }
+        $commandOutput = & $RunnerCliPath @commandArgs 2>&1
+        foreach ($line in @($commandOutput)) {
+            Write-Host $line
+        }
         $result.exit_code = $LASTEXITCODE
         if ($result.exit_code -ne 0) {
             throw "runner-cli ppl build failed with exit code $($result.exit_code)."
@@ -774,7 +803,8 @@ function Invoke-RunnerCliPplCapabilityCheck {
         $logAlignment = Test-PplBuildLabVIEWVersionAlignment `
             -IconEditorRepoPath $IconEditorRepoPath `
             -RequiredLabviewYear ([string]$effectiveExecutionLabviewYear) `
-            -PreExistingExecuteBuildSpecLogs @($preExistingExecuteBuildSpecLogs)
+            -PreExistingExecuteBuildSpecLogs @($preExistingExecuteBuildSpecLogs) `
+            -ExecutionOutputText ([string]::Join("`n", @($commandOutput)))
         $result.buildspec_log_path = [string]$logAlignment.buildspec_log_path
         $result.detected_labview_executable = [string]$logAlignment.detected_labview_executable
         $result.detected_labview_year = [string]$logAlignment.detected_labview_year
@@ -1694,7 +1724,13 @@ try {
             }
 
             $repoMode = [string]$repo.mode
-            $upstreamUrl = [string]$repo.required_remotes.upstream
+            $upstreamUrl = ''
+            if ($null -ne $repo.required_remotes) {
+                $upstreamProp = $repo.required_remotes.PSObject.Properties['upstream']
+                if ($null -ne $upstreamProp -and -not [string]::IsNullOrWhiteSpace([string]$upstreamProp.Value)) {
+                    $upstreamUrl = [string]$upstreamProp.Value
+                }
+            }
             $hasForkAlignmentScope = (
                 -not $offlineGitMode -and
                 $repoMode -eq 'fork' -and
