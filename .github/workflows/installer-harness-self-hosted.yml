@@ -94,6 +94,8 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          LVIE_GATE_REQUIRED_LABVIEW_YEAR: '2020'
+          LVIE_RUNNERCLI_EXECUTION_LABVIEW_YEAR: '2020'
         run: |
           $ErrorActionPreference = 'Stop'
           $toolDirs = @(

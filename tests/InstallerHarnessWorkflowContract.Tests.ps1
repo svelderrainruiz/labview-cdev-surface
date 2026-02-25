@@ -32,6 +32,8 @@ Describe 'Installer harness workflow contract' {
         $script:workflowContent | Should -Match 'Assert-InstallerHarnessRunnerBaseline\.ps1'
         $script:workflowContent | Should -Match '-AllowInteractiveRunner'
         $script:workflowContent | Should -Match 'Assert-InstallerHarnessMachinePreflight\.ps1'
+        $script:workflowContent | Should -Match "LVIE_GATE_REQUIRED_LABVIEW_YEAR:\s*'2020'"
+        $script:workflowContent | Should -Match "LVIE_RUNNERCLI_EXECUTION_LABVIEW_YEAR:\s*'2020'"
         $script:workflowContent | Should -Match 'Invoke-WorkspaceInstallerIteration\.ps1'
         $script:workflowContent | Should -Match '-Mode full'
         $script:workflowContent | Should -Match 'iteration-summary\.json'
