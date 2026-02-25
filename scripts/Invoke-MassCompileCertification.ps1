@@ -28,6 +28,9 @@ param(
     [string[]]$ExcludeFiles = @('Polymorphic Template.vi'),
 
     [Parameter()]
+    [string]$TargetRelativePath = 'vi.lib\LabVIEW Icon API',
+
+    [Parameter()]
     [string]$OutputPath = ''
 )
 
@@ -189,7 +192,7 @@ if (-not (Test-Path -LiteralPath $resolvedRepoPath -PathType Container)) {
     throw "Repo path not found: $resolvedRepoPath"
 }
 
-$targetDirectory = Join-Path $resolvedRepoPath 'Test\Templates'
+$targetDirectory = Join-Path $resolvedRepoPath $TargetRelativePath
 if (-not (Test-Path -LiteralPath $targetDirectory -PathType Container)) {
     throw "MassCompile target directory not found: $targetDirectory"
 }
@@ -269,6 +272,7 @@ $report = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
     status = $status
     repository_root = $resolvedRepoPath
+    target_relative_path = $TargetRelativePath
     target_directory = $targetDirectory
     staging_directory = $stagingDirectory
     excluded_files = @($ExcludeFiles)

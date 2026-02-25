@@ -50,6 +50,7 @@ Describe 'Self-hosted machine certification workflow contract' {
     It 'runs MassCompile certification and includes status in certification summary' {
         $script:workflowContent | Should -Match 'Run MassCompile certification'
         $script:workflowContent | Should -Match 'Invoke-MassCompileCertification\.ps1'
+        $script:workflowContent | Should -Match '-TargetRelativePath ''vi\.lib\\LabVIEW Icon API'''
         $script:workflowContent | Should -Match 'masscompile_report_path'
         $script:workflowContent | Should -Match 'masscompile_status'
         $script:workflowContent | Should -Match 'masscompile_exit_code'

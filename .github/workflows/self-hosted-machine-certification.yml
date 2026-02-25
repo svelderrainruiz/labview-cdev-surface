@@ -314,21 +314,28 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $outputRoot = Join-Path '${{ steps.runner-metadata.outputs.metadata_root }}' 'masscompile'
           $reportPath = Join-Path $outputRoot 'masscompile-certification-report.json'
-          & "$env:GITHUB_WORKSPACE\scripts\Invoke-MassCompileCertification.ps1" `
-            -RepoPath '${{ steps.seed-contract.outputs.clone_root }}' `
-            -ExecutionLabviewYear '${{ matrix.expected_labview_year }}' `
-            -SupportedBitness '64' `
-            -ArtifactRoot $outputRoot `
-            -OutputPath $reportPath
-          if ($LASTEXITCODE -ne 0) {
+          try {
+            & "$env:GITHUB_WORKSPACE\scripts\Invoke-MassCompileCertification.ps1" `
+              -RepoPath '${{ steps.seed-contract.outputs.clone_root }}' `
+              -ExecutionLabviewYear '${{ matrix.expected_labview_year }}' `
+              -SupportedBitness '64' `
+              -TargetRelativePath 'vi.lib\LabVIEW Icon API' `
+              -ArtifactRoot $outputRoot `
+              -OutputPath $reportPath
+          } catch {
             if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
               Get-Content -LiteralPath $reportPath -Raw | Write-Host
             }
-            throw "MassCompile certification failed."
+            throw
           }
 
           if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
             throw "MassCompile certification report not found: $reportPath"
+          }
+
+          $massCompileReport = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          if ([string]$massCompileReport.status -ne 'succeeded') {
+            throw ("MassCompile certification status is not succeeded: {0}" -f [string]$massCompileReport.status)
           }
 
           "masscompile_root=$outputRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
