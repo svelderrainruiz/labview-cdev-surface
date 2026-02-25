@@ -9,7 +9,7 @@ Use this template to drive Codex orchestration from an issue URL.
 - host-2026-desktop-windows
 
 ## Desired Outcome
-All listed setups complete `self-hosted-machine-certification.yml` with `certified=true`.
+All listed setups complete `self-hosted-machine-certification.yml` with `certified=true`, including a successful MassCompile certification report.
 
 <!-- CERT_CONFIG_START -->
 {
@@ -24,6 +24,7 @@ All listed setups complete `self-hosted-machine-certification.yml` with `certifi
     "scripts/Invoke-MachineCertificationFromIssue.ps1",
     "scripts/Start-SelfHostedMachineCertification.ps1",
     "scripts/Assert-InstallerHarnessMachinePreflight.ps1",
+    "scripts/Invoke-MassCompileCertification.ps1",
     "scripts/Invoke-EndToEndPortMatrixLocal.ps1"
   ],
   "setup_names": [
@@ -67,6 +68,7 @@ When merged to `main`, change `ref` to `main`.
 - docker_context_switch_failed
 - docker_context_unreachable
 - port_contract_failure
+- masscompile_certification_failed
 - workflow_dependency_missing
 - branch_drift_missing_script
 - runner_label_collision_guard_unconfigured

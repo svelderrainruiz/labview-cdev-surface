@@ -27,6 +27,7 @@ Execution contract:
    - conclusion
    - certification artifact URL
    - recorder identity marker from `recorder_name` in issue config
+   - masscompile status from certification report
 5. If any setup fails, classify root cause under one of:
    - runner_label_mismatch
    - runner_label_collision_guard_unconfigured
@@ -35,6 +36,7 @@ Execution contract:
    - docker_context_switch_failed
    - docker_context_unreachable
    - port_contract_failure
+   - masscompile_certification_failed
    - workflow_dependency_missing
 6. Propose exact remediation commands and rerun only failed setups.
 7. Do not mark setup as certified unless run conclusion is success and certification report has `certified=true`.
@@ -55,6 +57,7 @@ Execution contract:
     "scripts/Invoke-MachineCertificationFromIssue.ps1",
     "scripts/Start-SelfHostedMachineCertification.ps1",
     "scripts/Assert-InstallerHarnessMachinePreflight.ps1",
+    "scripts/Invoke-MassCompileCertification.ps1",
     "scripts/Invoke-EndToEndPortMatrixLocal.ps1"
   ],
   "setup_names": [

@@ -46,4 +46,24 @@ Describe 'Self-hosted machine certification workflow contract' {
         $script:workflowContent | Should -Match 'docker_context:\s*"desktop-windows"'
         $script:workflowContent | Should -Match 'cdev-surface-windows-gate'
     }
+
+    It 'runs MassCompile certification and includes status in certification summary' {
+        $script:workflowContent | Should -Match 'Run MassCompile certification'
+        $script:workflowContent | Should -Match 'Invoke-MassCompileCertification\.ps1'
+        $script:workflowContent | Should -Match 'masscompile_report_path'
+        $script:workflowContent | Should -Match 'masscompile_status'
+        $script:workflowContent | Should -Match 'masscompile_exit_code'
+    }
+
+    It 'requires headless runner enforcement in machine preflight and MassCompile script' {
+        $preflightScriptPath = Join-Path $script:repoRoot 'scripts\Assert-InstallerHarnessMachinePreflight.ps1'
+        $massCompileScriptPath = Join-Path $script:repoRoot 'scripts\Invoke-MassCompileCertification.ps1'
+        $preflightContent = Get-Content -LiteralPath $preflightScriptPath -Raw
+        $massCompileContent = Get-Content -LiteralPath $massCompileScriptPath -Raw
+
+        $preflightContent | Should -Match 'runner:headless_session'
+        $preflightContent | Should -Match 'runner_not_headless'
+        $massCompileContent | Should -Match 'runner_not_headless'
+        $massCompileContent | Should -Match "'-Headless'"
+    }
 }

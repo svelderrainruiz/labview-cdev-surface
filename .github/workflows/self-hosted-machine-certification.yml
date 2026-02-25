@@ -307,6 +307,33 @@ jobs:
           "matrix_root=$outputRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "matrix_summary_path=$matrixSummaryPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - id: masscompile
+        name: Run MassCompile certification
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outputRoot = Join-Path '${{ steps.runner-metadata.outputs.metadata_root }}' 'masscompile'
+          $reportPath = Join-Path $outputRoot 'masscompile-certification-report.json'
+          & "$env:GITHUB_WORKSPACE\scripts\Invoke-MassCompileCertification.ps1" `
+            -RepoPath '${{ steps.seed-contract.outputs.clone_root }}' `
+            -ExecutionLabviewYear '${{ matrix.expected_labview_year }}' `
+            -SupportedBitness '64' `
+            -ArtifactRoot $outputRoot `
+            -OutputPath $reportPath
+          if ($LASTEXITCODE -ne 0) {
+            if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+              Get-Content -LiteralPath $reportPath -Raw | Write-Host
+            }
+            throw "MassCompile certification failed."
+          }
+
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+            throw "MassCompile certification report not found: $reportPath"
+          }
+
+          "masscompile_root=$outputRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "masscompile_report_path=$reportPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - id: certification-summary
         name: Write certification summary
         shell: powershell
@@ -315,6 +342,7 @@ jobs:
           $summaryPath = Join-Path '${{ steps.runner-metadata.outputs.metadata_root }}' 'self-hosted-machine-certification-report.json'
           $matrixSummary = Get-Content -LiteralPath '${{ steps.port-matrix.outputs.matrix_summary_path }}' -Raw | ConvertFrom-Json -ErrorAction Stop
           $preflightReport = Get-Content -LiteralPath '${{ steps.machine-preflight.outputs.report_path }}' -Raw | ConvertFrom-Json -ErrorAction Stop
+          $massCompileReport = Get-Content -LiteralPath '${{ steps.masscompile.outputs.masscompile_report_path }}' -Raw | ConvertFrom-Json -ErrorAction Stop
 
           $certification = [ordered]@{
             timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
@@ -330,8 +358,12 @@ jobs:
             docker_context = '${{ matrix.docker_context }}'
             matrix = $matrixSummary.summary
             machine_preflight_status = [string]$preflightReport.status
+            masscompile_status = [string]$massCompileReport.status
+            masscompile_exit_code = [int]$massCompileReport.exit_code
+            masscompile_log_path = [string]$massCompileReport.masscompile_log_path
             certified = (
               [string]$preflightReport.status -eq 'succeeded' -and
+              [string]$massCompileReport.status -eq 'succeeded' -and
               [int]$matrixSummary.summary.strict_failures -eq 0 -and
               [int]$matrixSummary.summary.override_failures -eq 0 -and
               @($matrixSummary.summary.duplicate_port_groups).Count -eq 0
@@ -347,6 +379,8 @@ jobs:
             "- runner: $($certification.runner_name)",
             "- labels: $($certification.requested_runner_labels_json)",
             "- icon-editor pinned sha: $($certification.icon_editor_pinned_sha)",
+            "- masscompile status: $($certification.masscompile_status)",
+            "- masscompile exit code: $($certification.masscompile_exit_code)",
             "- strict failures: $($matrixSummary.summary.strict_failures)",
             "- override failures: $($matrixSummary.summary.override_failures)",
             "- duplicate port groups: $(@($matrixSummary.summary.duplicate_port_groups).Count)",
@@ -369,6 +403,8 @@ jobs:
             ${{ steps.runner-metadata.outputs.metadata_path }}
             ${{ steps.machine-preflight.outputs.report_path }}
             ${{ steps.port-matrix.outputs.matrix_summary_path }}
+            ${{ steps.masscompile.outputs.masscompile_report_path }}
             ${{ steps.certification-summary.outputs.summary_path }}
             ${{ steps.port-matrix.outputs.matrix_root }}
+            ${{ steps.masscompile.outputs.masscompile_root }}
           if-no-files-found: error
