@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -30,6 +30,10 @@ $warnings = @()
 $resolvedTools = @{}
 
 $toolFallbackMap = @{
+    'powershell' = @(
+        (Join-Path $PSHOME 'powershell.exe'),
+        'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    )
     'pwsh' = @(
         (Join-Path $PSHOME 'pwsh.exe'),
         'C:\Program Files\PowerShell\7\pwsh.exe'
@@ -108,7 +112,7 @@ function Resolve-Tool {
     }
 }
 
-foreach ($commandName in @('pwsh', 'git', 'gh', 'g-cli', 'vipm', 'docker')) {
+foreach ($commandName in @('powershell', 'git', 'gh', 'g-cli', 'vipm', 'docker')) {
     $resolved = Resolve-Tool -Name $commandName -FallbackPaths @($toolFallbackMap[$commandName])
     $resolvedTools[$commandName] = $resolved
     $commandDetail = "{0} [{1}]" -f $resolved.path, $resolved.source
@@ -119,6 +123,14 @@ foreach ($commandName in @('pwsh', 'git', 'gh', 'g-cli', 'vipm', 'docker')) {
         -Detail $commandDetail `
         -Severity $severity
 }
+
+$pwshResolved = Resolve-Tool -Name 'pwsh' -FallbackPaths @($toolFallbackMap['pwsh'])
+$resolvedTools['pwsh'] = $pwshResolved
+Add-Check `
+    -Name 'command:pwsh' `
+    -Passed ([bool]$pwshResolved.found) `
+    -Detail ("{0} [{1}]" -f $pwshResolved.path, $pwshResolved.source) `
+    -Severity 'warning'
 
 $nsisResolved = $NsisPath
 if (-not (Test-Path -LiteralPath $nsisResolved -PathType Leaf)) {

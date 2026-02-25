@@ -32,7 +32,7 @@ jobs:
 
       - name: Resolve workflow_dispatch ref override
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ref != '' }}
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           & git fetch --prune origin "${{ inputs.ref }}"
@@ -46,7 +46,7 @@ jobs:
           }
 
       - name: Assert runner baseline lock
-        shell: pwsh
+        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -61,7 +61,7 @@ jobs:
           }
 
           $reportPath = Join-Path $env:RUNNER_TEMP 'installer-harness/runner-baseline-report.json'
-          & pwsh -NoProfile -File ./scripts/Assert-InstallerHarnessRunnerBaseline.ps1 `
+          & "$env:GITHUB_WORKSPACE\scripts\Assert-InstallerHarnessRunnerBaseline.ps1" `
             -Repository '${{ github.repository }}' `
             -RunnerRoots @($activeRunnerRoot) `
             -AllowInteractiveRunner `
@@ -74,11 +74,11 @@ jobs:
           }
 
       - name: Assert machine preflight pack
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $reportPath = Join-Path $env:RUNNER_TEMP 'installer-harness/machine-preflight-report.json'
-          & pwsh -NoProfile -File ./scripts/Assert-InstallerHarnessMachinePreflight.ps1 `
+          & "$env:GITHUB_WORKSPACE\scripts\Assert-InstallerHarnessMachinePreflight.ps1" `
             -ExpectedLabviewYear '2020' `
             -DockerContext 'desktop-linux' `
             -DockerCheckSeverity warning `
@@ -91,7 +91,7 @@ jobs:
           }
 
       - name: Run full installer harness iteration
-        shell: pwsh
+        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
           LVIE_GATE_REQUIRED_LABVIEW_YEAR: '2020'
@@ -116,7 +116,7 @@ jobs:
 
           $outputRoot = Join-Path $env:RUNNER_TEMP 'installer-harness'
           $smokeWorkspaceRoot = Join-Path $env:RUNNER_TEMP 'dev-smoke-lvie'
-          & pwsh -NoProfile -File ./scripts/Invoke-WorkspaceInstallerIteration.ps1 `
+          & "$env:GITHUB_WORKSPACE\scripts\Invoke-WorkspaceInstallerIteration.ps1" `
             -Mode full `
             -Iterations 1 `
             -OutputRoot $outputRoot `
@@ -131,7 +131,7 @@ jobs:
           }
 
       - name: Validate harness reports and post-action gates
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $outputRoot = Join-Path $env:RUNNER_TEMP 'installer-harness'

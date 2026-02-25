@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -35,6 +35,21 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Get-PreferredPowerShellExecutable {
+    [CmdletBinding()]
+    param()
+
+    $candidates = @('powershell', 'pwsh')
+    foreach ($candidate in $candidates) {
+        $command = Get-Command -Name $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+            return [string]$command.Source
+        }
+    }
+
+    throw "Required command 'powershell' (or fallback 'pwsh') was not found on PATH."
+}
 
 function Ensure-Directory {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -93,6 +108,7 @@ function Invoke-IterationRun {
         [Parameter(Mandatory = $true)][string]$SmokeRootBase,
         [Parameter(Mandatory = $true)][bool]$KeepSmoke,
         [Parameter(Mandatory = $true)][string]$NsisRootValue,
+        [Parameter(Mandatory = $true)][string]$PowerShellExecutable,
         [Parameter(Mandatory = $true)][string]$ExerciseScriptPath
     )
 
@@ -126,7 +142,7 @@ function Invoke-IterationRun {
     $status = 'unknown'
 
     try {
-        & pwsh @argList | Out-Host
+        & $PowerShellExecutable @argList | Out-Host
         $runExitCode = $LASTEXITCODE
         if ($runExitCode -ne 0) {
             throw "Exercise script exited with code $runExitCode"
@@ -159,11 +175,12 @@ if (-not (Test-Path -LiteralPath $exerciseScript -PathType Leaf)) {
 
 $resolvedOutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 Ensure-Directory -Path $resolvedOutputRoot
+$preferredPowerShell = Get-PreferredPowerShellExecutable
 
 $runResults = @()
 if (-not $Watch) {
     for ($i = 1; $i -le $Iterations; $i++) {
-        $runResults += Invoke-IterationRun -RunIndex $i -ResolvedOutputRoot $resolvedOutputRoot -ModeValue $Mode -SmokeRootBase $SmokeWorkspaceRoot -KeepSmoke ([bool]$KeepSmokeWorkspace) -NsisRootValue $NsisRoot -ExerciseScriptPath $exerciseScript
+        $runResults += Invoke-IterationRun -RunIndex $i -ResolvedOutputRoot $resolvedOutputRoot -ModeValue $Mode -SmokeRootBase $SmokeWorkspaceRoot -KeepSmoke ([bool]$KeepSmokeWorkspace) -NsisRootValue $NsisRoot -PowerShellExecutable $preferredPowerShell -ExerciseScriptPath $exerciseScript
     }
 } else {
     $runIndex = 0
@@ -178,7 +195,7 @@ if (-not $Watch) {
 
         if ($runIndex -eq 0) {
             $runIndex++
-            $runResults += Invoke-IterationRun -RunIndex $runIndex -ResolvedOutputRoot $resolvedOutputRoot -ModeValue $Mode -SmokeRootBase $SmokeWorkspaceRoot -KeepSmoke ([bool]$KeepSmokeWorkspace) -NsisRootValue $NsisRoot -ExerciseScriptPath $exerciseScript
+            $runResults += Invoke-IterationRun -RunIndex $runIndex -ResolvedOutputRoot $resolvedOutputRoot -ModeValue $Mode -SmokeRootBase $SmokeWorkspaceRoot -KeepSmoke ([bool]$KeepSmokeWorkspace) -NsisRootValue $NsisRoot -PowerShellExecutable $preferredPowerShell -ExerciseScriptPath $exerciseScript
             $fingerprint = Get-WorkspaceFingerprint -RepoRoot $repoRoot
             continue
         }
@@ -192,7 +209,7 @@ if (-not $Watch) {
         Write-Host "Change detected. Re-running installer iteration."
         $fingerprint = $newFingerprint
         $runIndex++
-        $runResults += Invoke-IterationRun -RunIndex $runIndex -ResolvedOutputRoot $resolvedOutputRoot -ModeValue $Mode -SmokeRootBase $SmokeWorkspaceRoot -KeepSmoke ([bool]$KeepSmokeWorkspace) -NsisRootValue $NsisRoot -ExerciseScriptPath $exerciseScript
+        $runResults += Invoke-IterationRun -RunIndex $runIndex -ResolvedOutputRoot $resolvedOutputRoot -ModeValue $Mode -SmokeRootBase $SmokeWorkspaceRoot -KeepSmoke ([bool]$KeepSmokeWorkspace) -NsisRootValue $NsisRoot -PowerShellExecutable $preferredPowerShell -ExerciseScriptPath $exerciseScript
         $fingerprint = Get-WorkspaceFingerprint -RepoRoot $repoRoot
     }
 }
@@ -206,6 +223,7 @@ $summaryPath = Join-Path $resolvedOutputRoot 'iteration-summary.json'
     poll_seconds = $PollSeconds
     requested_iterations = $Iterations
     max_runs = $MaxRuns
+    powershell_executable = $preferredPowerShell
     executed_runs = @($runResults).Count
     latest = $latest
     runs = $runResults

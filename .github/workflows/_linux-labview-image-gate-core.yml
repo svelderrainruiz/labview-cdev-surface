@@ -593,19 +593,71 @@ jobs:
           Copy-Item -LiteralPath $builtPplPath -Destination $snapshotPath -Force
 
           $shutdownLockReportPath = Join-Path $artifactRoot 'windows-shutdown-lock-check.json'
+          $shutdownStatus = 'pass'
+          $shutdownReason = 'none'
+          $teardownWaitSeconds = 90
+          $teardownPollSeconds = 3
+          $teardownDeadline = (Get-Date).AddSeconds($teardownWaitSeconds)
+          $teardownAttempts = 0
+          $teardownActions = @()
+
+          do {
+            $teardownAttempts += 1
+            $labviewProcesses = @(
+              Get-Process -Name 'LabVIEW' -ErrorAction SilentlyContinue |
+                Select-Object Id, ProcessName, Path
+            )
+            if ($labviewProcesses.Count -eq 0) {
+              break
+            }
+
+            foreach ($process in $labviewProcesses) {
+              $stopStatus = 'stopped'
+              $stopMessage = ''
+              try {
+                Stop-Process -Id ([int]$process.Id) -Force -ErrorAction Stop
+              } catch {
+                $stopStatus = 'stop_failed'
+                $stopMessage = [string]$_.Exception.Message
+              }
+
+              $teardownActions += [ordered]@{
+                id = [int]$process.Id
+                process_name = [string]$process.ProcessName
+                path = [string]$process.Path
+                status = $stopStatus
+                message = $stopMessage
+                attempt = $teardownAttempts
+              }
+            }
+
+            Start-Sleep -Seconds $teardownPollSeconds
+          } while ((Get-Date) -lt $teardownDeadline)
+
           $labviewProcesses = @(
             Get-Process -Name 'LabVIEW' -ErrorAction SilentlyContinue |
               Select-Object Id, ProcessName, Path
           )
-          $shutdownStatus = 'pass'
-          $shutdownReason = 'none'
+
           $lockProbePath = $builtPplPath
-          $lockProbeAcquired = $true
-          try {
-            $lockStream = [System.IO.File]::Open($lockProbePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-            $lockStream.Dispose()
-          } catch {
-            $lockProbeAcquired = $false
+          $lockProbeAcquired = $false
+          $lockProbeErrorMessage = ''
+          $lockProbeAttempts = 0
+          $lockProbeMaxAttempts = 15
+          while (-not $lockProbeAcquired -and $lockProbeAttempts -lt $lockProbeMaxAttempts) {
+            $lockProbeAttempts += 1
+            try {
+              $lockStream = [System.IO.File]::Open($lockProbePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+              $lockStream.Dispose()
+              $lockProbeAcquired = $true
+              $lockProbeErrorMessage = ''
+            } catch {
+              $lockProbeErrorMessage = [string]$_.Exception.Message
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          if (-not $lockProbeAcquired) {
             $shutdownStatus = 'fail'
             $shutdownReason = 'file_lock_detected'
           }
@@ -621,10 +673,17 @@ jobs:
           [ordered]@{
             status = $shutdownStatus
             reason = $shutdownReason
+            teardown_wait_seconds = $teardownWaitSeconds
+            teardown_poll_seconds = $teardownPollSeconds
+            teardown_attempts = $teardownAttempts
+            teardown_actions = @($teardownActions)
             labview_process_count = $labviewProcesses.Count
             labview_processes = @($labviewProcesses)
             lock_probe_path = $lockProbePath
             lock_probe_acquired = $lockProbeAcquired
+            lock_probe_attempts = $lockProbeAttempts
+            lock_probe_max_attempts = $lockProbeMaxAttempts
+            lock_probe_error = $lockProbeErrorMessage
             timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
           } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $shutdownLockReportPath -Encoding utf8
           if ($shutdownStatus -ne 'pass') {
@@ -976,19 +1035,71 @@ jobs:
           Copy-Item -LiteralPath $builtPplPath -Destination $snapshotPath -Force
 
           $shutdownLockReportPath = Join-Path $artifactRoot 'windows-shutdown-lock-check.json'
+          $shutdownStatus = 'pass'
+          $shutdownReason = 'none'
+          $teardownWaitSeconds = 90
+          $teardownPollSeconds = 3
+          $teardownDeadline = (Get-Date).AddSeconds($teardownWaitSeconds)
+          $teardownAttempts = 0
+          $teardownActions = @()
+
+          do {
+            $teardownAttempts += 1
+            $labviewProcesses = @(
+              Get-Process -Name 'LabVIEW' -ErrorAction SilentlyContinue |
+                Select-Object Id, ProcessName, Path
+            )
+            if ($labviewProcesses.Count -eq 0) {
+              break
+            }
+
+            foreach ($process in $labviewProcesses) {
+              $stopStatus = 'stopped'
+              $stopMessage = ''
+              try {
+                Stop-Process -Id ([int]$process.Id) -Force -ErrorAction Stop
+              } catch {
+                $stopStatus = 'stop_failed'
+                $stopMessage = [string]$_.Exception.Message
+              }
+
+              $teardownActions += [ordered]@{
+                id = [int]$process.Id
+                process_name = [string]$process.ProcessName
+                path = [string]$process.Path
+                status = $stopStatus
+                message = $stopMessage
+                attempt = $teardownAttempts
+              }
+            }
+
+            Start-Sleep -Seconds $teardownPollSeconds
+          } while ((Get-Date) -lt $teardownDeadline)
+
           $labviewProcesses = @(
             Get-Process -Name 'LabVIEW' -ErrorAction SilentlyContinue |
               Select-Object Id, ProcessName, Path
           )
-          $shutdownStatus = 'pass'
-          $shutdownReason = 'none'
+
           $lockProbePath = $builtPplPath
-          $lockProbeAcquired = $true
-          try {
-            $lockStream = [System.IO.File]::Open($lockProbePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-            $lockStream.Dispose()
-          } catch {
-            $lockProbeAcquired = $false
+          $lockProbeAcquired = $false
+          $lockProbeErrorMessage = ''
+          $lockProbeAttempts = 0
+          $lockProbeMaxAttempts = 15
+          while (-not $lockProbeAcquired -and $lockProbeAttempts -lt $lockProbeMaxAttempts) {
+            $lockProbeAttempts += 1
+            try {
+              $lockStream = [System.IO.File]::Open($lockProbePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+              $lockStream.Dispose()
+              $lockProbeAcquired = $true
+              $lockProbeErrorMessage = ''
+            } catch {
+              $lockProbeErrorMessage = [string]$_.Exception.Message
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          if (-not $lockProbeAcquired) {
             $shutdownStatus = 'fail'
             $shutdownReason = 'file_lock_detected'
           }
@@ -1004,10 +1115,17 @@ jobs:
           [ordered]@{
             status = $shutdownStatus
             reason = $shutdownReason
+            teardown_wait_seconds = $teardownWaitSeconds
+            teardown_poll_seconds = $teardownPollSeconds
+            teardown_attempts = $teardownAttempts
+            teardown_actions = @($teardownActions)
             labview_process_count = $labviewProcesses.Count
             labview_processes = @($labviewProcesses)
             lock_probe_path = $lockProbePath
             lock_probe_acquired = $lockProbeAcquired
+            lock_probe_attempts = $lockProbeAttempts
+            lock_probe_max_attempts = $lockProbeMaxAttempts
+            lock_probe_error = $lockProbeErrorMessage
             timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
           } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $shutdownLockReportPath -Encoding utf8
           if ($shutdownStatus -ne 'pass') {
