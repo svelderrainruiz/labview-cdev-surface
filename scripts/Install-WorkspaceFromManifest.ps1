@@ -44,6 +44,36 @@ function Normalize-Url {
     return ($Url.Trim().TrimEnd('/')).ToLowerInvariant()
 }
 
+function Invoke-Git {
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [string]$RepoPath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $commandArgs = @()
+    if (-not [string]::IsNullOrWhiteSpace($RepoPath)) {
+        $commandArgs += @('-C', $RepoPath)
+    }
+    $commandArgs += @($Arguments)
+
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & git @commandArgs 2>&1
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = @($output)
+    }
+}
+
 function To-Bool {
     param($Value)
     return [bool]$Value
@@ -1554,9 +1584,9 @@ try {
                 }
 
                 Ensure-Directory -Path (Split-Path -Parent $repoPath)
-                $cloneOutput = & git clone $originUrl $repoPath 2>&1
-                if ($LASTEXITCODE -ne 0) {
-                    throw "git clone failed for '$repoPath'. $([string]::Join("`n", @($cloneOutput)))"
+                $cloneResult = Invoke-Git -Arguments @('clone', $originUrl, $repoPath)
+                if ($cloneResult.ExitCode -ne 0) {
+                    throw "git clone failed for '$repoPath'. $([string]::Join("`n", @($cloneResult.Output)))"
                 }
             }
 
@@ -1571,9 +1601,9 @@ try {
                     continue
                 }
 
-                $currentUrlRaw = & git -C $repoPath remote get-url $remoteName 2>$null
-                $currentExit = $LASTEXITCODE
-                $currentUrl = if ($currentExit -eq 0) { [string]$currentUrlRaw.Trim() } else { '' }
+                $currentUrlResult = Invoke-Git -RepoPath $repoPath -Arguments @('remote', 'get-url', $remoteName)
+                $currentExit = $currentUrlResult.ExitCode
+                $currentUrl = if ($currentExit -eq 0) { [string]([string]::Join("`n", @($currentUrlResult.Output))).Trim() } else { '' }
                 $remoteCheck = [ordered]@{
                     remote = $remoteName
                     expected = $expectedUrl
@@ -1590,13 +1620,13 @@ try {
                         $repoResult.status = 'fail'
                         $repoResult.issues += "remote_missing_$remoteName"
                     } else {
-                        $addOutput = & git -C $repoPath remote add $remoteName $expectedUrl 2>&1
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "Failed to add remote '$remoteName' on '$repoPath'. $([string]::Join("`n", @($addOutput)))"
+                        $addResult = Invoke-Git -RepoPath $repoPath -Arguments @('remote', 'add', $remoteName, $expectedUrl)
+                        if ($addResult.ExitCode -ne 0) {
+                            throw "Failed to add remote '$remoteName' on '$repoPath'. $([string]::Join("`n", @($addResult.Output)))"
                         }
-                        $afterUrlRaw = & git -C $repoPath remote get-url $remoteName 2>$null
-                        $afterExit = $LASTEXITCODE
-                        $afterUrl = if ($afterExit -eq 0) { [string]$afterUrlRaw.Trim() } else { '' }
+                        $afterUrlResult = Invoke-Git -RepoPath $repoPath -Arguments @('remote', 'get-url', $remoteName)
+                        $afterExit = $afterUrlResult.ExitCode
+                        $afterUrl = if ($afterExit -eq 0) { [string]([string]::Join("`n", @($afterUrlResult.Output))).Trim() } else { '' }
                         $remoteCheck.after = $afterUrl
                         if ($afterExit -eq 0 -and (Normalize-Url $afterUrl) -eq (Normalize-Url $expectedUrl)) {
                             $remoteCheck.status = 'added'
@@ -1614,13 +1644,13 @@ try {
                         $repoResult.status = 'fail'
                         $repoResult.issues += "remote_mismatch_$remoteName"
                     } else {
-                        $setOutput = & git -C $repoPath remote set-url $remoteName $expectedUrl 2>&1
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "Failed to set remote '$remoteName' on '$repoPath'. $([string]::Join("`n", @($setOutput)))"
+                        $setResult = Invoke-Git -RepoPath $repoPath -Arguments @('remote', 'set-url', $remoteName, $expectedUrl)
+                        if ($setResult.ExitCode -ne 0) {
+                            throw "Failed to set remote '$remoteName' on '$repoPath'. $([string]::Join("`n", @($setResult.Output)))"
                         }
-                        $afterUrlRaw = & git -C $repoPath remote get-url $remoteName 2>$null
-                        $afterExit = $LASTEXITCODE
-                        $afterUrl = if ($afterExit -eq 0) { [string]$afterUrlRaw.Trim() } else { '' }
+                        $afterUrlResult = Invoke-Git -RepoPath $repoPath -Arguments @('remote', 'get-url', $remoteName)
+                        $afterExit = $afterUrlResult.ExitCode
+                        $afterUrl = if ($afterExit -eq 0) { [string]([string]::Join("`n", @($afterUrlResult.Output))).Trim() } else { '' }
                         $remoteCheck.after = $afterUrl
                         if ($afterExit -eq 0 -and (Normalize-Url $afterUrl) -eq (Normalize-Url $expectedUrl)) {
                             $remoteCheck.status = 'updated'
@@ -1638,18 +1668,18 @@ try {
 
             if (-not [string]::IsNullOrWhiteSpace($defaultBranch)) {
                 if ($offlineGitMode) {
-                    & git -C $repoPath cat-file -e "$pinnedSha`^{commit}" 2>$null
-                    if ($LASTEXITCODE -ne 0) {
+                    $catFileResult = Invoke-Git -RepoPath $repoPath -Arguments @('cat-file', '-e', "$pinnedSha`^{commit}")
+                    if ($catFileResult.ExitCode -ne 0) {
                         throw "Pinned SHA '$pinnedSha' is not present in local object database for '$repoPath' while offline git mode is enabled."
                     }
                 } else {
-                    $fetchOutput = & git -C $repoPath fetch --no-tags origin $defaultBranch 2>&1
-                    if ($LASTEXITCODE -ne 0) {
-                        throw "Failed to fetch origin/$defaultBranch for '$repoPath'. $([string]::Join("`n", @($fetchOutput)))"
+                    $fetchResult = Invoke-Git -RepoPath $repoPath -Arguments @('fetch', '--no-tags', 'origin', $defaultBranch)
+                    if ($fetchResult.ExitCode -ne 0) {
+                        throw "Failed to fetch origin/$defaultBranch for '$repoPath'. $([string]::Join("`n", @($fetchResult.Output)))"
                     }
 
-                    & git -C $repoPath show-ref --verify "refs/remotes/origin/$defaultBranch" *> $null
-                    if ($LASTEXITCODE -ne 0) {
+                    $showRefResult = Invoke-Git -RepoPath $repoPath -Arguments @('show-ref', '--verify', "refs/remotes/origin/$defaultBranch")
+                    if ($showRefResult.ExitCode -ne 0) {
                         $repoResult.status = 'fail'
                         $repoResult.issues += 'default_branch_missing_on_origin'
                     }
@@ -1657,26 +1687,26 @@ try {
             }
 
             if (-not $existsBefore -and $Mode -eq 'Install') {
-                $checkoutOutput = & git -C $repoPath checkout --detach $pinnedSha 2>&1
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Failed to checkout pinned_sha '$pinnedSha' in '$repoPath'. $([string]::Join("`n", @($checkoutOutput)))"
+                $checkoutResult = Invoke-Git -RepoPath $repoPath -Arguments @('checkout', '--detach', $pinnedSha)
+                if ($checkoutResult.ExitCode -ne 0) {
+                    throw "Failed to checkout pinned_sha '$pinnedSha' in '$repoPath'. $([string]::Join("`n", @($checkoutResult.Output)))"
                 }
             }
 
-            $headOutput = & git -C $repoPath rev-parse HEAD 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "Failed to resolve HEAD for '$repoPath'. $([string]::Join("`n", @($headOutput)))"
+            $headResult = Invoke-Git -RepoPath $repoPath -Arguments @('rev-parse', 'HEAD')
+            if ($headResult.ExitCode -ne 0) {
+                throw "Failed to resolve HEAD for '$repoPath'. $([string]::Join("`n", @($headResult.Output)))"
             }
-            $headSha = [string]$headOutput.Trim().ToLowerInvariant()
+            $headSha = [string]([string]::Join("`n", @($headResult.Output))).Trim().ToLowerInvariant()
             $repoResult.head_sha = $headSha
             if ($headSha -ne $pinnedSha) {
                 $repoResult.status = 'fail'
                 $repoResult.issues += 'head_sha_mismatch'
             }
 
-            $branchOutput = & git -C $repoPath symbolic-ref --quiet --short HEAD 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                $branchName = [string]$branchOutput.Trim()
+            $branchResult = Invoke-Git -RepoPath $repoPath -Arguments @('symbolic-ref', '--quiet', '--short', 'HEAD')
+            if ($branchResult.ExitCode -eq 0) {
+                $branchName = [string]([string]::Join("`n", @($branchResult.Output))).Trim()
                 $repoResult.branch_state = $branchName
                 if (-not [string]::IsNullOrWhiteSpace($defaultBranch) -and $branchName -ne $defaultBranch) {
                     $repoResult.status = 'fail'
