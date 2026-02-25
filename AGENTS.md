@@ -57,6 +57,7 @@ Build and gate lanes must run in isolated workspaces on every run (`D:\dev` pref
 ## Installer Release Contract
 - Primary release publish path is `.github/workflows/release-with-linux-gate.yml`.
 - `release-with-linux-gate.yml` must run `repo_guard` and fail outside `LabVIEW-Community-CI-CD/labview-cdev-surface`.
+- `release-with-linux-gate.yml` must run hosted Windows NSIS preflight first (`hosted_nsis_preflight`) before Linux gate execution.
 - `release-with-linux-gate.yml` must run Linux acceptance via `./.github/workflows/_linux-labview-image-gate-core.yml` before publish.
 - Windows gate runners must be preconfigured in Windows container mode; do not rely on interactive Docker engine switching in CI.
 - Build workspace isolation policy is mandatory for gate/build lanes:
@@ -196,4 +197,13 @@ pwsh -NoProfile -File .\scripts\Test-WorkspaceManifestBranchDrift.ps1 `
 pwsh -NoProfile -File .\scripts\Test-PolicyContracts.ps1 `
   -WorkspaceRoot C:\dev `
   -FailOnWarning
+```
+
+```powershell
+pwsh -NoProfile -File .\scripts\Dispatch-WorkflowAtRemoteHead.ps1 `
+  -Workflow linux-labview-image-gate.yml `
+  -Repository svelderrainruiz/labview-cdev-surface `
+  -Remote origin `
+  -Branch fix/linux-gate-only-required-harness `
+  -OutputPath .\artifacts\dispatch\linux-gate-dispatch.json
 ```

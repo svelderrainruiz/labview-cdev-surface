@@ -55,9 +55,44 @@ jobs:
             throw "Release orchestration is restricted to '$expectedRepo'. Current repository '$actualRepo' is not allowed."
           }
 
+  hosted_nsis_preflight:
+    name: Hosted NSIS Preflight
+    needs: [repo_guard]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned NSIS toolchain
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install nsis --version=3.10 -y --no-progress
+          $nsisRoot = 'C:\Program Files (x86)\NSIS'
+          $makensisPath = Join-Path $nsisRoot 'makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensisPath -PathType Leaf)) {
+            throw "makensis.exe was not found after NSIS install: $makensisPath"
+          }
+          $reportedVersion = (& $makensisPath /VERSION 2>&1 | Out-String).Trim()
+          if ([string]::IsNullOrWhiteSpace($reportedVersion)) {
+            throw 'NSIS preflight failed to read makensis version output.'
+          }
+          if ($reportedVersion -notmatch '^v?3\.10(\.|$)') {
+            throw "Unexpected makensis version '$reportedVersion'. Expected NSIS 3.10.x."
+          }
+
+      - name: Validate NSIS installer script presence
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installerScriptPath = Join-Path $env:GITHUB_WORKSPACE 'nsis\workspace-bootstrap-installer.nsi'
+          if (-not (Test-Path -LiteralPath $installerScriptPath -PathType Leaf)) {
+            throw "Installer script missing for preflight: $installerScriptPath"
+          }
+
   linux_gate:
     name: Linux Gate
-    needs: [repo_guard]
+    needs: [repo_guard, hosted_nsis_preflight]
     uses: ./.github/workflows/_linux-labview-image-gate-core.yml
     secrets: inherit
 
@@ -65,7 +100,7 @@ jobs:
     name: Gate Policy
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [repo_guard, linux_gate]
+    needs: [repo_guard, hosted_nsis_preflight, linux_gate]
     outputs:
       override_applied: ${{ steps.evaluate.outputs.override_applied }}
       override_reason: ${{ steps.evaluate.outputs.override_reason }}
@@ -76,6 +111,7 @@ jobs:
         shell: pwsh
         env:
           REPO_GUARD_RESULT: ${{ needs.repo_guard.result }}
+          HOSTED_NSIS_PREFLIGHT_RESULT: ${{ needs.hosted_nsis_preflight.result }}
           LINUX_GATE_RESULT: ${{ needs.linux_gate.result }}
           ALLOW_GATE_OVERRIDE: ${{ inputs.allow_gate_override }}
           OVERRIDE_REASON_INPUT: ${{ inputs.override_reason }}
@@ -84,6 +120,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $repoGuardResult = [string]$env:REPO_GUARD_RESULT
+          $hostedNsisPreflightResult = [string]$env:HOSTED_NSIS_PREFLIGHT_RESULT
           $linuxGateResult = [string]$env:LINUX_GATE_RESULT
           $allowOverride = [System.Convert]::ToBoolean([string]$env:ALLOW_GATE_OVERRIDE)
           $overrideReason = [string]$env:OVERRIDE_REASON_INPUT
@@ -92,6 +129,9 @@ jobs:
           $overrideApplied = $false
           if ($repoGuardResult -ne 'success') {
             throw "Repository guard did not succeed. Blocking release publish."
+          }
+          if ($hostedNsisPreflightResult -ne 'success') {
+            throw "Hosted NSIS preflight did not succeed. Blocking release publish."
           }
           if ($linuxGateResult -eq 'success') {
             Write-Host 'Linux gate passed. Release publish is allowed.'

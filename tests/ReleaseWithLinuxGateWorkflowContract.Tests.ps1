@@ -26,13 +26,19 @@ Describe 'Release with Linux gate workflow contract' {
         $script:workflowContent | Should -Match 'override_incident_url:'
     }
 
-    It 'contains repo guard, hard gate ordering, and reusable workflow chaining' {
+    It 'contains repo guard, hosted NSIS preflight-first ordering, hard gate ordering, and reusable workflow chaining' {
         $script:workflowContent | Should -Match "expectedRepo = 'LabVIEW-Community-CI-CD/labview-cdev-surface'"
+        $script:workflowContent | Should -Match 'hosted_nsis_preflight:'
+        $script:workflowContent | Should -Match 'name:\s*Hosted NSIS Preflight'
+        $script:workflowContent | Should -Match 'runs-on:\s*windows-latest'
+        $script:workflowContent | Should -Match 'choco install nsis --version=3\.10'
+        $script:workflowContent | Should -Match 'makensisPath'
+        $script:workflowContent | Should -Match 'workspace-bootstrap-installer\.nsi'
         $script:workflowContent | Should -Match 'linux_gate:'
-        $script:workflowContent | Should -Match 'needs:\s*\[repo_guard\]'
+        $script:workflowContent | Should -Match 'needs:\s*\[repo_guard,\s*hosted_nsis_preflight\]'
         $script:workflowContent | Should -Match 'uses:\s*\./\.github/workflows/_linux-labview-image-gate-core\.yml'
         $script:workflowContent | Should -Match 'gate_policy:'
-        $script:workflowContent | Should -Match 'needs:\s*\[repo_guard,\s*linux_gate\]'
+        $script:workflowContent | Should -Match 'needs:\s*\[repo_guard,\s*hosted_nsis_preflight,\s*linux_gate\]'
         $script:workflowContent | Should -Match 'if:\s*\$\{\{\s*always\(\)\s*\}\}'
         $script:workflowContent | Should -Match 'release_publish:'
         $script:workflowContent | Should -Match 'needs:\s*\[gate_policy\]'
@@ -41,6 +47,7 @@ Describe 'Release with Linux gate workflow contract' {
 
     It 'enforces hard block and controlled override metadata requirements' {
         $script:workflowContent | Should -Match 'Repository guard did not succeed'
+        $script:workflowContent | Should -Match 'Hosted NSIS preflight did not succeed'
         $script:workflowContent | Should -Match 'Linux gate failed and override is not enabled'
         $script:workflowContent | Should -Match 'allow_gate_override=true requires non-empty override_reason'
         $script:workflowContent | Should -Match 'allow_gate_override=true requires override_incident_url'
