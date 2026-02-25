@@ -161,14 +161,18 @@ function Invoke-PowerShellFile {
         $invocationArgs += @($ScriptArguments)
     }
 
-    $commandOutput = & $PowerShellExecutable @invocationArgs 2>&1
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $commandOutput = & $PowerShellExecutable @invocationArgs 2>&1
+        $commandExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
     foreach ($line in @($commandOutput)) {
         Write-Host $line
     }
-    if ($null -eq $LASTEXITCODE) {
-        return 0
-    }
-    return [int]$LASTEXITCODE
+    return $commandExitCode
 }
 
 function Add-PostActionSequenceEntry {
@@ -786,11 +790,18 @@ function Invoke-RunnerCliPplCapabilityCheck {
         )
         $result.command = @($commandArgs)
 
-        $commandOutput = & $RunnerCliPath @commandArgs 2>&1
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $commandOutput = & $RunnerCliPath @commandArgs 2>&1
+            $runnerCliExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+        } finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
         foreach ($line in @($commandOutput)) {
             Write-Host $line
         }
-        $result.exit_code = $LASTEXITCODE
+        $result.exit_code = $runnerCliExitCode
         if ($result.exit_code -ne 0) {
             throw "runner-cli ppl build failed with exit code $($result.exit_code)."
         }
