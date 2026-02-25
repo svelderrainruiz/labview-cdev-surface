@@ -171,6 +171,15 @@ Build and gate lanes must run in isolated workspaces on every run (`D:\dev` pref
   - `-Mode fast` for quick build/bundle iterations.
   - `-Mode full` for isolated smoke install validation.
   - `-Watch` to auto-rerun on contract file changes without manual restarts.
+- Use `scripts/Invoke-InstallerHarnessLocalDebug.ps1` as the default local troubleshooting wrapper; it runs the iteration script and prints a focused summary with smoke report paths and top errors.
+- Fast runtime-only loop (installer logic focus): `pwsh -NoProfile -File .\scripts\Install-WorkspaceFromManifest.ps1 -WorkspaceRoot D:\_lvie-ci\surface\smoke -ManifestPath .\workspace-governance-payload\workspace-governance\workspace-governance.json -Mode Install -InstallerExecutionContext NsisInstall -OutputPath D:\_lvie-ci\surface\smoke\artifacts\workspace-install-latest.json`
+- Full harness parity loop (build + smoke installer): `pwsh -NoProfile -File .\scripts\Invoke-InstallerHarnessLocalDebug.ps1 -Mode full -Iterations 1 -OutputRoot D:\_lvie-ci\surface\iteration -SmokeWorkspaceRoot D:\_lvie-ci\surface\smoke -KeepSmokeWorkspace -EmitSummaryJson`
+- Watch loop for rapid edit-test cycles: `pwsh -NoProfile -File .\scripts\Invoke-InstallerHarnessLocalDebug.ps1 -Mode full -Watch -PollSeconds 5 -MaxRuns 20 -OutputRoot D:\_lvie-ci\surface\iteration -SmokeWorkspaceRoot D:\_lvie-ci\surface\smoke -KeepSmokeWorkspace`
+- First triage files after any failure:
+  - `D:\_lvie-ci\surface\iteration\iteration-summary.json`
+  - `D:\_lvie-ci\surface\iteration\run-001\exercise-report.json`
+  - `D:\_lvie-ci\surface\smoke\artifacts\workspace-install-latest.json`
+  - `D:\_lvie-ci\surface\smoke\artifacts\workspace-installer-launch.log`
 - Use `scripts/Invoke-DockerDesktopLinuxIteration.ps1 -DockerContext desktop-linux` for Docker Desktop Linux command-surface checks (`runner-cli --help`, `runner-cli ppl --help`) before full Windows LabVIEW image runs.
 - If Docker Desktop Linux context is unavailable, confirm `Microsoft-Hyper-V-All`, `VirtualMachinePlatform`, and `Microsoft-Windows-Subsystem-Linux` are enabled, then reboot before retrying.
 - Use `scripts/Test-RunnerCliBundleDeterminism.ps1` and `scripts/Test-WorkspaceInstallerDeterminism.ps1` locally before proposing release-tag publication.

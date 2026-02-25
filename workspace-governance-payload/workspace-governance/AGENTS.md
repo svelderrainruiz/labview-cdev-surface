@@ -166,4 +166,9 @@ Deterministic installer policy (`lvie-cdev-workspace-installer.exe`):
 - Branch protection checks during install are audit-only (non-blocking for install completion).
 - Mutation safety remains enforced by this file and governance scripts after install.
 
+Local troubleshooting runbook (source checkout):
+- Preferred wrapper: `pwsh -NoProfile -File .\scripts\Invoke-InstallerHarnessLocalDebug.ps1 -Mode full -Iterations 1 -OutputRoot D:\_lvie-ci\surface\iteration -SmokeWorkspaceRoot D:\_lvie-ci\surface\smoke -KeepSmokeWorkspace -EmitSummaryJson`
+- Runtime-only triage: `pwsh -NoProfile -File .\scripts\Install-WorkspaceFromManifest.ps1 -WorkspaceRoot D:\_lvie-ci\surface\smoke -ManifestPath .\workspace-governance-payload\workspace-governance\workspace-governance.json -Mode Install -InstallerExecutionContext NsisInstall -OutputPath D:\_lvie-ci\surface\smoke\artifacts\workspace-install-latest.json`
+- First triage files: `iteration-summary.json`, `exercise-report.json`, `workspace-install-latest.json`, `workspace-installer-launch.log`.
+
 - If preflight fails, do not run mutating `git` or `gh` commands until remotes and policy targets are corrected.
