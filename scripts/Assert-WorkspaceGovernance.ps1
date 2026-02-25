@@ -125,8 +125,16 @@ function Invoke-GhJson {
         }
     }
 
-    $output = & gh api $Endpoint 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & gh api $Endpoint 2>&1
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    if ($exitCode -ne 0) {
         return [pscustomobject]@{
             ok = $false
             data = $null
