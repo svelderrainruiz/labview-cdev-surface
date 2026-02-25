@@ -87,7 +87,7 @@ if (-not (Test-Path -Path $manifestPath)) {
 }
 
 $manifest = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
-Add-Check -Scope 'manifest' -Name 'managed_repo_count' -Passed ($manifest.managed_repos.Count -ge 9) -Detail "managed_repos=$($manifest.managed_repos.Count)"
+Add-Check -Scope 'manifest' -Name 'managed_repo_count' -Passed ($manifest.managed_repos.Count -ge 11) -Detail "managed_repos=$($manifest.managed_repos.Count)"
 
 $installerContractProperty = $manifest.PSObject.Properties['installer_contract']
 $installerContract = if ($null -ne $installerContractProperty) { $manifest.installer_contract } else { $null }
@@ -192,12 +192,18 @@ if (-not (Test-Path -Path $parentAgentsPath)) {
         'LabVIEW-Community-CI-CD/labview-for-containers:main',
         'svelderrainruiz/labview-icon-editor-codex-skills:main',
         'LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills:main',
+        'svelderrainruiz/labview-cdev-cli:main',
+        'LabVIEW-Community-CI-CD/labview-cdev-cli:main',
         'svelderrainruiz/labview-cdev-surface:main',
         'LabVIEW-Community-CI-CD/labview-cdev-surface:main',
         'C:\dev\labview-icon-editor-codex-skills',
         'C:\dev\labview-icon-editor-codex-skills-upstream',
+        'C:\dev\labview-cdev-cli',
+        'C:\dev\labview-cdev-cli-upstream',
         'C:\dev\labview-cdev-surface',
         'C:\dev\labview-cdev-surface-upstream',
+        '-R svelderrainruiz/labview-cdev-cli',
+        '-R LabVIEW-Community-CI-CD/labview-cdev-cli',
         '-R svelderrainruiz/labview-cdev-surface',
         '-R LabVIEW-Community-CI-CD/labview-cdev-surface',
         'Pipeline Contract',

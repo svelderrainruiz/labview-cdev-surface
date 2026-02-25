@@ -434,6 +434,68 @@
       "pinned_sha": "09e708dae4c8ed45c69ec03d9e49654c3ded39a4"
     },
     {
+      "path": "C:\\dev\\labview-cdev-cli",
+      "repo_name": "labview-cdev-cli",
+      "mode": "fork",
+      "required_remotes": {
+        "origin": "https://github.com/svelderrainruiz/labview-cdev-cli.git",
+        "upstream": "https://github.com/LabVIEW-Community-CI-CD/labview-cdev-cli.git"
+      },
+      "allowed_mutation_remotes": [
+        "origin"
+      ],
+      "required_gh_repo": "svelderrainruiz/labview-cdev-cli",
+      "forbidden_targets": [
+        "ni/labview-cdev-cli",
+        "LabVIEW-Community-CI-CD/labview-cdev-cli (for mutation)"
+      ],
+      "default_branch": "main",
+      "branch_protection_required": true,
+      "default_branch_mutation_policy": "block_when_contract_missing",
+      "required_status_checks": [
+        "CI Pipeline"
+      ],
+      "strict_status_checks": true,
+      "required_review_policy": {
+        "required_pull_request_reviews": true,
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews": true
+      },
+      "forbid_force_push": true,
+      "forbid_deletion": true,
+      "pinned_sha": "26c6afc60bdba67c2f8c3905e0be75a9794b58c5"
+    },
+    {
+      "path": "C:\\dev\\labview-cdev-cli-upstream",
+      "repo_name": "labview-cdev-cli-upstream",
+      "mode": "org",
+      "required_remotes": {
+        "origin": "https://github.com/LabVIEW-Community-CI-CD/labview-cdev-cli.git"
+      },
+      "allowed_mutation_remotes": [
+        "origin"
+      ],
+      "required_gh_repo": "LabVIEW-Community-CI-CD/labview-cdev-cli",
+      "forbidden_targets": [
+        "ni/labview-cdev-cli"
+      ],
+      "default_branch": "main",
+      "branch_protection_required": true,
+      "default_branch_mutation_policy": "block_when_contract_missing",
+      "required_status_checks": [
+        "CI Pipeline"
+      ],
+      "strict_status_checks": true,
+      "required_review_policy": {
+        "required_pull_request_reviews": true,
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews": true
+      },
+      "forbid_force_push": true,
+      "forbid_deletion": true,
+      "pinned_sha": "ab9d1588724b05b69cc067b56fecf385704d0dea"
+    },
+    {
       "path": "C:\\dev\\labview-cdev-surface",
       "repo_name": "labview-cdev-surface",
       "mode": "fork",

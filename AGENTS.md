@@ -12,6 +12,17 @@ Build and gate lanes must run in isolated workspaces on every run (`D:\dev` pref
 - `.github/workflows/workspace-sha-drift-signal.yml` is the drift signal workflow.
 - `.github/workflows/workspace-sha-refresh-pr.yml` is the auto-PR SHA refresh workflow.
 
+## Workspace Repo Targets
+- CLI governed default branches:
+  - `svelderrainruiz/labview-cdev-cli:main`
+  - `LabVIEW-Community-CI-CD/labview-cdev-cli:main`
+- CLI workspace paths:
+  - `C:\dev\labview-cdev-cli`
+  - `C:\dev\labview-cdev-cli-upstream`
+- Required CLI `gh` repo pins:
+  - `-R svelderrainruiz/labview-cdev-cli`
+  - `-R LabVIEW-Community-CI-CD/labview-cdev-cli`
+
 ## CLI Orchestration Contract
 - Preferred operator interface is `Invoke-CdevCli.ps1` from the bundled cdev CLI payload.
 - Required CLI command surface (stable tokens):

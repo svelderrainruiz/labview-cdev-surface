@@ -16,6 +16,8 @@
 | `C:\dev\labview-for-containers-org` | Containers fork checkout | `svelderrainruiz/labview-for-containers-org` | Personal fork workflow | `origin` only (`svelderrainruiz/labview-for-containers-org`) | `svelderrainruiz/labview-for-containers-org` |
 | `C:\dev\labview-icon-editor-codex-skills` | Codex Skills fork checkout | `svelderrainruiz/labview-icon-editor-codex-skills` | Personal fork workflow | `origin` only (`svelderrainruiz/labview-icon-editor-codex-skills`) | `svelderrainruiz/labview-icon-editor-codex-skills` |
 | `C:\dev\labview-icon-editor-codex-skills-upstream` | Codex Skills org checkout | `LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills` | Org-path workflow | `origin` (`LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills`) | `LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills` |
+| `C:\dev\labview-cdev-cli` | CDev CLI fork checkout | `svelderrainruiz/labview-cdev-cli` | Personal fork workflow | `origin` only (`svelderrainruiz/labview-cdev-cli`) | `svelderrainruiz/labview-cdev-cli` |
+| `C:\dev\labview-cdev-cli-upstream` | CDev CLI org checkout | `LabVIEW-Community-CI-CD/labview-cdev-cli` | Org-path workflow | `origin` (`LabVIEW-Community-CI-CD/labview-cdev-cli`) | `LabVIEW-Community-CI-CD/labview-cdev-cli` |
 | `C:\dev\labview-cdev-surface` | CDev Surface fork checkout | `svelderrainruiz/labview-cdev-surface` | Personal fork workflow | `origin` only (`svelderrainruiz/labview-cdev-surface`) | `svelderrainruiz/labview-cdev-surface` |
 | `C:\dev\labview-cdev-surface-upstream` | CDev Surface org checkout | `LabVIEW-Community-CI-CD/labview-cdev-surface` | Org-path workflow | `origin` (`LabVIEW-Community-CI-CD/labview-cdev-surface`) | `LabVIEW-Community-CI-CD/labview-cdev-surface` |
 
@@ -42,6 +44,13 @@
 - Codex Skills org checkout (`C:\dev\labview-icon-editor-codex-skills-upstream`):
   - Allowed mutation target: `origin` (`LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills`).
   - Forbidden mutation target: `svelderrainruiz/labview-icon-editor-codex-skills` (for org mutation workflow).
+- CDev CLI fork checkout (`C:\dev\labview-cdev-cli`):
+  - Allowed mutation target: `origin` (`svelderrainruiz/labview-cdev-cli`).
+  - `upstream` must resolve to `LabVIEW-Community-CI-CD/labview-cdev-cli` and is read-only.
+  - Forbidden mutation targets: `LabVIEW-Community-CI-CD/labview-cdev-cli` (for fork mutation workflow) and `ni/labview-cdev-cli`.
+- CDev CLI org checkout (`C:\dev\labview-cdev-cli-upstream`):
+  - Allowed mutation target: `origin` (`LabVIEW-Community-CI-CD/labview-cdev-cli`).
+  - Forbidden mutation target: `ni/labview-cdev-cli`.
 - CDev Surface fork checkout (`C:\dev\labview-cdev-surface`):
   - Allowed mutation target: `origin` (`svelderrainruiz/labview-cdev-surface`).
   - `upstream` must resolve to `LabVIEW-Community-CI-CD/labview-cdev-surface` and is read-only.
@@ -72,6 +81,13 @@
 - Codex Skills org workflow (`C:\dev\labview-icon-editor-codex-skills-upstream`):
   - Use repository-standard CI triggers on `LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills`.
   - Required `gh` repo pin: `-R LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills`.
+- CDev CLI fork workflow (`C:\dev\labview-cdev-cli`):
+  - Default trigger: push-based CI on `svelderrainruiz/labview-cdev-cli` branches.
+  - Required `gh` repo pin: `-R svelderrainruiz/labview-cdev-cli`.
+  - Do not dispatch/rerun against `upstream` for fork mutation workflows.
+- CDev CLI org workflow (`C:\dev\labview-cdev-cli-upstream`):
+  - Use repository-standard CI triggers on `LabVIEW-Community-CI-CD/labview-cdev-cli`.
+  - Required `gh` repo pin: `-R LabVIEW-Community-CI-CD/labview-cdev-cli`.
 - CDev Surface fork workflow (`C:\dev\labview-cdev-surface`):
   - Default trigger: push-based CI on `svelderrainruiz/labview-cdev-surface` branches.
   - Required `gh` repo pin: `-R svelderrainruiz/labview-cdev-surface`.
@@ -96,6 +112,8 @@ Governed default branches:
 - `LabVIEW-Community-CI-CD/labview-for-containers:main`
 - `svelderrainruiz/labview-icon-editor-codex-skills:main`
 - `LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills:main`
+- `svelderrainruiz/labview-cdev-cli:main`
+- `LabVIEW-Community-CI-CD/labview-cdev-cli:main`
 - `svelderrainruiz/labview-cdev-surface:main`
 - `LabVIEW-Community-CI-CD/labview-cdev-surface:main`
 
@@ -113,12 +131,15 @@ Required status check contexts:
 - `LabVIEW-Community-CI-CD/labview-for-containers:main` -> validate current org contract (`run-labview-cli`, `run-labview-cli-windows`, `stabilization-2026-certification-gate`)
 - `svelderrainruiz/labview-icon-editor-codex-skills:main` -> `CI Pipeline`, `Workspace Installer Contract`
 - `LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills:main` -> `CI Pipeline`, `Workspace Installer Contract`
+- `svelderrainruiz/labview-cdev-cli:main` -> `CI Pipeline`
+- `LabVIEW-Community-CI-CD/labview-cdev-cli:main` -> `CI Pipeline`
 - `svelderrainruiz/labview-cdev-surface:main` -> `CI Pipeline`
 - `LabVIEW-Community-CI-CD/labview-cdev-surface:main` -> `CI Pipeline`
 
 Review requirements:
 - For fresh fork/org repos in this workspace: minimum `required_approving_review_count >= 1`.
 - For `LabVIEW-Community-CI-CD/labview-for-containers:main`: validate existing org policy as-is unless maintainers intentionally change it.
+- `labview-cdev-cli` is an exception in this cycle: allow `required_approving_review_count = 0` for both fork and org repos.
 - `labview-cdev-surface` is an exception in this cycle: allow `required_approving_review_count = 0` for both fork and org repos.
 
 ## Preflight Checks
@@ -133,6 +154,8 @@ Review requirements:
   - `C:\dev\labview-for-containers-org`
   - `C:\dev\labview-icon-editor-codex-skills`
   - `C:\dev\labview-icon-editor-codex-skills-upstream`
+  - `C:\dev\labview-cdev-cli`
+  - `C:\dev\labview-cdev-cli-upstream`
   - `C:\dev\labview-cdev-surface`
   - `C:\dev\labview-cdev-surface-upstream`
 

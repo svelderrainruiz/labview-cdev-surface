@@ -119,7 +119,7 @@ Describe 'Workspace surface contract' {
     }
 
     It 'tracks a deterministic managed repo set with pinned SHA lock' {
-        @($script:manifest.managed_repos).Count | Should -BeGreaterOrEqual 9
+        @($script:manifest.managed_repos).Count | Should -BeGreaterOrEqual 11
         $script:manifest.PSObject.Properties.Name | Should -Contain 'installer_contract'
         $script:manifest.installer_contract.runner_cli_bundle.executable | Should -Be 'runner-cli.exe'
         $script:manifest.installer_contract.labview_gate.required_year | Should -Be '2020'
@@ -223,10 +223,12 @@ Describe 'Workspace surface contract' {
         ((Get-Content -LiteralPath $script:payloadCliLinuxShaPath -Raw).Trim()).StartsWith($manifestLinuxHash) | Should -BeTrue
     }
 
-    It 'contains codex skills fork and org entries in the manifest' {
+    It 'contains codex skills and cdev-cli fork/org entries in the manifest' {
         $repoSlugs = @($script:manifest.managed_repos | ForEach-Object { [string]$_.required_gh_repo })
         $repoSlugs | Should -Contain 'svelderrainruiz/labview-icon-editor-codex-skills'
         $repoSlugs | Should -Contain 'LabVIEW-Community-CI-CD/labview-icon-editor-codex-skills'
+        $repoSlugs | Should -Contain 'svelderrainruiz/labview-cdev-cli'
+        $repoSlugs | Should -Contain 'LabVIEW-Community-CI-CD/labview-cdev-cli'
     }
 
     It 'pins NSIS launcher to Windows PowerShell executable paths' {

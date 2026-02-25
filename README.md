@@ -18,6 +18,10 @@ This repository owns:
 - validation scripts in `scripts/`
 - drift and contract workflows in `.github/workflows/`
 
+Governed CLI repos in the `C:\dev` workspace:
+- `svelderrainruiz/labview-cdev-cli:main` (`C:\dev\labview-cdev-cli`, use `-R svelderrainruiz/labview-cdev-cli`)
+- `LabVIEW-Community-CI-CD/labview-cdev-cli:main` (`C:\dev\labview-cdev-cli-upstream`, use `-R LabVIEW-Community-CI-CD/labview-cdev-cli`)
+
 ## CLI-first control plane
 
 Preferred operator interface:
