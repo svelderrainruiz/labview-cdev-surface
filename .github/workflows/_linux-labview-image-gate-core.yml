@@ -1,0 +1,1430 @@
+name: _linux-labview-image-gate-core
+
+on:
+  workflow_call:
+    outputs:
+      gate_status:
+        description: Pass/fail status for the Linux image gate.
+        value: ${{ jobs.gate-summary.outputs.gate_status }}
+      gate_report_artifact_name:
+        description: Artifact name containing Linux gate logs and reports.
+        value: ${{ jobs.gate-summary.outputs.gate_report_artifact_name }}
+      gate_report_path:
+        description: Full path for the generated Linux image gate report JSON.
+        value: ${{ jobs.gate-summary.outputs.gate_report_path }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-parity-context:
+    name: Resolve Linux Container Parity Context
+    runs-on: ubuntu-latest
+    outputs:
+      lane_id: ${{ steps.resolve.outputs.lane_id }}
+      lvcontainer_raw: ${{ steps.resolve.outputs.lvcontainer_raw }}
+      lvcontainer_linux_tag: ${{ steps.resolve.outputs.lvcontainer_linux_tag }}
+      lvcontainer_linux_image: ${{ steps.resolve.outputs.lvcontainer_linux_image }}
+      lvcontainer_year: ${{ steps.resolve.outputs.lvcontainer_year }}
+      build_spec_marker: ${{ steps.resolve.outputs.build_spec_marker }}
+      release_required_year: ${{ steps.resolve.outputs.release_required_year }}
+      icon_editor_source_url: ${{ steps.resolve.outputs.icon_editor_source_url }}
+      icon_editor_pinned_sha: ${{ steps.resolve.outputs.icon_editor_pinned_sha }}
+      linux_vip_driver: ${{ steps.resolve.outputs.linux_vip_driver }}
+      linux_vip_required_ppl_bitnesses: ${{ steps.resolve.outputs.linux_vip_required_ppl_bitnesses }}
+      linux_vip_artifact_role: ${{ steps.resolve.outputs.linux_vip_artifact_role }}
+      linux_lock_policy: ${{ steps.resolve.outputs.linux_lock_policy }}
+      windows_vip_headless_required: ${{ steps.resolve.outputs.windows_vip_headless_required }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve lvcontainer context from pinned icon-editor commit
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest_path="$GITHUB_WORKSPACE/workspace-governance.json"
+          if [[ ! -f "$manifest_path" ]]; then
+            echo "Manifest not found: $manifest_path" >&2
+            exit 1
+          fi
+
+          repo_json="$(jq -c '.managed_repos[] | select(.repo_name=="labview-icon-editor")' "$manifest_path")"
+          if [[ -z "$repo_json" ]]; then
+            echo "workspace-governance.json does not define managed repo 'labview-icon-editor'." >&2
+            exit 1
+          fi
+
+          icon_editor_source_url="$(echo "$repo_json" | jq -r '.required_remotes.origin // empty')"
+          icon_editor_pinned_sha="$(echo "$repo_json" | jq -r '.pinned_sha // empty')"
+          if [[ -z "$icon_editor_source_url" || -z "$icon_editor_pinned_sha" ]]; then
+            echo "Missing origin URL or pinned SHA for managed repo 'labview-icon-editor'." >&2
+            exit 1
+          fi
+
+          lane_id='${{ vars.LVIE_RELEASE_BUILD_LANE }}'
+          if [[ -z "$lane_id" ]]; then
+            lane_id="$(jq -r '.installer_contract.release_build_default_lane // empty' "$manifest_path")"
+          fi
+          if [[ -z "$lane_id" ]]; then
+            lane_id='multiarch-2025q3'
+          fi
+          if ! jq -e --arg lane "$lane_id" '.installer_contract.release_build_contracts[$lane]' "$manifest_path" >/dev/null; then
+            echo "Unknown release lane '$lane_id'. Define installer_contract.release_build_contracts[$lane_id]." >&2
+            exit 1
+          fi
+
+          release_required_year="$(jq -r --arg lane "$lane_id" '.installer_contract.release_build_contracts[$lane].required_year // .installer_contract.release_build_contract.required_year // .installer_contract.labview_gate.required_year // "2020"' "$manifest_path")"
+          if [[ ! "$release_required_year" =~ ^[0-9]{4}$ ]]; then
+            echo "Invalid release required year '$release_required_year' in installer contract." >&2
+            exit 1
+          fi
+
+          linux_lock_policy="$(jq -r '.installer_contract.container_parity_contract.lock_policy // empty' "$manifest_path")"
+          if [[ "$linux_lock_policy" != 'derive-tag-then-pin-digest' ]]; then
+            echo "container_parity_contract.lock_policy must be 'derive-tag-then-pin-digest'. Found '$linux_lock_policy'." >&2
+            exit 1
+          fi
+
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "$tmp_root"' EXIT
+          clone_root="$tmp_root/icon-editor"
+
+          git clone --quiet --no-tags "$icon_editor_source_url" "$clone_root"
+          git -C "$clone_root" checkout --quiet --detach "$icon_editor_pinned_sha"
+
+          lvcontainer_path="$clone_root/.lvcontainer"
+          if [[ ! -f "$lvcontainer_path" ]]; then
+            echo ".lvcontainer was not found at pinned icon-editor commit '$icon_editor_pinned_sha'." >&2
+            exit 1
+          fi
+
+          lvcontainer_raw="$(tr -d '\r\n' < "$lvcontainer_path")"
+          if [[ -z "$lvcontainer_raw" ]]; then
+            echo ".lvcontainer is empty at pinned icon-editor commit '$icon_editor_pinned_sha'." >&2
+            exit 1
+          fi
+
+          if [[ "$lvcontainer_raw" =~ -linux$ ]]; then
+            lvcontainer_linux_tag="$lvcontainer_raw"
+          elif [[ "$lvcontainer_raw" =~ -windows$ ]]; then
+            lvcontainer_linux_tag="${lvcontainer_raw%-windows}-linux"
+          else
+            echo "Unsupported .lvcontainer tag '$lvcontainer_raw'. Expected '*-linux' or '*-windows'." >&2
+            exit 1
+          fi
+
+          lane_override_image="$(jq -r --arg lane "$lane_id" '.installer_contract.container_parity_contract.release_lane_linux_override[$lane] // empty' "$manifest_path")"
+          if [[ -n "$lane_override_image" ]]; then
+            if [[ "$lane_override_image" =~ ^nationalinstruments/labview:([^@]+)@(sha256:[0-9a-f]{64})$ ]]; then
+              lvcontainer_linux_tag="${BASH_REMATCH[1]}"
+              linux_digest="${BASH_REMATCH[2]}"
+            else
+              echo "Invalid release_lane_linux_override image '$lane_override_image'. Expected nationalinstruments/labview:<tag>@sha256:<digest>." >&2
+              exit 1
+            fi
+          else
+            linux_digest="$(jq -r --arg tag "$lvcontainer_linux_tag" '.installer_contract.container_parity_contract.linux_image_locks[$tag] // empty' "$manifest_path")"
+            if [[ ! "$linux_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Missing or invalid linux_image_locks entry for tag '$lvcontainer_linux_tag'." >&2
+              exit 1
+            fi
+            lane_override_image="nationalinstruments/labview:${lvcontainer_linux_tag}@${linux_digest}"
+          fi
+
+          if [[ ! "$lvcontainer_linux_tag" =~ ^(latest|[0-9]{4}q[0-9]+)-linux$ ]]; then
+            echo "Resolved linux tag '$lvcontainer_linux_tag' is invalid." >&2
+            exit 1
+          fi
+
+          mapfile -t allowed_linux_tags < <(jq -r '.installer_contract.container_parity_contract.allowed_linux_tags[]? // empty' "$manifest_path")
+          if (( ${#allowed_linux_tags[@]} > 0 )); then
+            tag_allowed='false'
+            for allowed in "${allowed_linux_tags[@]}"; do
+              if [[ "$allowed" == "$lvcontainer_linux_tag" ]]; then
+                tag_allowed='true'
+                break
+              fi
+            done
+            if [[ "$tag_allowed" != 'true' ]]; then
+              echo "Resolved linux tag '$lvcontainer_linux_tag' is not in allowed_linux_tags contract." >&2
+              exit 1
+            fi
+          fi
+
+          lvcontainer_year=''
+          if [[ "$lvcontainer_linux_tag" =~ ^([0-9]{4})q[0-9]+-linux$ ]]; then
+            lvcontainer_year="${BASH_REMATCH[1]}"
+          fi
+          if [[ -z "$lvcontainer_year" ]]; then
+            echo "Unable to derive LabVIEW year from resolved linux tag '$lvcontainer_linux_tag'." >&2
+            exit 1
+          fi
+
+          linux_vip_enabled="$(jq -r '.installer_contract.container_parity_contract.linux_vip_build.enabled // false' "$manifest_path")"
+          linux_vip_driver="$(jq -r '.installer_contract.container_parity_contract.linux_vip_build.driver // empty' "$manifest_path")"
+          linux_vip_artifact_role="$(jq -r '.installer_contract.container_parity_contract.linux_vip_build.artifact_role // empty' "$manifest_path")"
+          linux_vip_required_ppl_bitnesses="$(jq -r '(.installer_contract.container_parity_contract.linux_vip_build.required_ppl_bitness // []) | sort | join(",")' "$manifest_path")"
+          windows_vip_headless_required="$(jq -r '.installer_contract.container_parity_contract.windows_vip_headless_required // false' "$manifest_path")"
+
+          if [[ "$linux_vip_enabled" != 'true' ]]; then
+            echo "linux_vip_build.enabled must be true in container parity contract." >&2
+            exit 1
+          fi
+          if [[ "$linux_vip_driver" != 'vipm-cli' ]]; then
+            echo "linux_vip_build.driver must be 'vipm-cli'. Found '$linux_vip_driver'." >&2
+            exit 1
+          fi
+          if [[ "$linux_vip_artifact_role" != 'signal-only' ]]; then
+            echo "linux_vip_build.artifact_role must be 'signal-only'. Found '$linux_vip_artifact_role'." >&2
+            exit 1
+          fi
+          if [[ "$linux_vip_required_ppl_bitnesses" != '32,64' ]]; then
+            echo "linux_vip_build.required_ppl_bitness must equal [32,64]. Found '$linux_vip_required_ppl_bitnesses'." >&2
+            exit 1
+          fi
+          if [[ "$windows_vip_headless_required" != 'true' && "$windows_vip_headless_required" != 'false' ]]; then
+            echo "container_parity_contract.windows_vip_headless_required must be boolean true/false. Found '$windows_vip_headless_required'." >&2
+            exit 1
+          fi
+
+          lvcontainer_linux_image="$lane_override_image"
+          build_spec_kind="$(jq -r '.installer_contract.container_parity_contract.build_spec_kind // "ppl"' "$manifest_path")"
+          build_spec_placeholder="$(jq -r '.installer_contract.container_parity_contract.build_spec_placeholder // "srcdist"' "$manifest_path")"
+          build_spec_marker="${build_spec_kind}+${build_spec_placeholder}-placeholder"
+
+          echo "lane_id=$lane_id" >> "$GITHUB_OUTPUT"
+          echo "lvcontainer_raw=$lvcontainer_raw" >> "$GITHUB_OUTPUT"
+          echo "lvcontainer_linux_tag=$lvcontainer_linux_tag" >> "$GITHUB_OUTPUT"
+          echo "lvcontainer_linux_image=$lvcontainer_linux_image" >> "$GITHUB_OUTPUT"
+          echo "lvcontainer_year=$lvcontainer_year" >> "$GITHUB_OUTPUT"
+          echo "build_spec_marker=$build_spec_marker" >> "$GITHUB_OUTPUT"
+          echo "release_required_year=$release_required_year" >> "$GITHUB_OUTPUT"
+          echo "icon_editor_source_url=$icon_editor_source_url" >> "$GITHUB_OUTPUT"
+          echo "icon_editor_pinned_sha=$icon_editor_pinned_sha" >> "$GITHUB_OUTPUT"
+          echo "linux_vip_driver=$linux_vip_driver" >> "$GITHUB_OUTPUT"
+          echo "linux_vip_required_ppl_bitnesses=$linux_vip_required_ppl_bitnesses" >> "$GITHUB_OUTPUT"
+          echo "linux_vip_artifact_role=$linux_vip_artifact_role" >> "$GITHUB_OUTPUT"
+          echo "linux_lock_policy=$linux_lock_policy" >> "$GITHUB_OUTPUT"
+          echo "windows_vip_headless_required=$windows_vip_headless_required" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Linux Gate Context"
+            echo ""
+            echo "- lane_id: \`$lane_id\`"
+            echo "- lvcontainer_raw: \`$lvcontainer_raw\`"
+            echo "- lvcontainer_linux_tag: \`$lvcontainer_linux_tag\`"
+            echo "- lvcontainer_linux_image: \`$lvcontainer_linux_image\`"
+            echo "- release_required_year: \`$release_required_year\`"
+            echo "- build_spec_marker: \`$build_spec_marker\`"
+            echo "- linux_vip_driver: \`$linux_vip_driver\`"
+            echo "- linux_vip_required_ppl_bitnesses: \`$linux_vip_required_ppl_bitnesses\`"
+            echo "- linux_vip_artifact_role: \`$linux_vip_artifact_role\`"
+            echo "- linux_lock_policy: \`$linux_lock_policy\`"
+            echo "- windows_vip_headless_required: \`$windows_vip_headless_required\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows-host-ppl-32:
+    name: Windows Host PPL Prerequisite (32-bit)
+    needs: [resolve-parity-context]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, user-session, cdev-surface-windows-gate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build x86 PPL prerequisite using host runner-cli
+        shell: powershell
+        env:
+          REQUIRED_LABVIEW_YEAR: ${{ needs.resolve-parity-context.outputs.release_required_year }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $bitness = '32'
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\linux-image-gate\windows-ppl-32'
+          if (Test-Path -LiteralPath $artifactRoot -PathType Container) {
+            Remove-Item -LiteralPath $artifactRoot -Recurse -Force
+          }
+          New-Item -Path $artifactRoot -ItemType Directory -Force | Out-Null
+          $runnerCliRoot = Join-Path $artifactRoot 'tools\runner-cli\win-x64'
+          New-Item -Path $runnerCliRoot -ItemType Directory -Force | Out-Null
+
+          & "$env:GITHUB_WORKSPACE\scripts\Build-RunnerCliBundleFromManifest.ps1" `
+            -ManifestPath (Join-Path $env:GITHUB_WORKSPACE 'workspace-governance.json') `
+            -OutputRoot $runnerCliRoot `
+            -RepoName 'labview-icon-editor' `
+            -Runtime 'win-x64' `
+            -Deterministic:$true
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build-RunnerCliBundleFromManifest failed for 32-bit prerequisite lane with exit code $LASTEXITCODE."
+          }
+
+          $runnerCliPath = Join-Path $runnerCliRoot 'runner-cli.exe'
+          $runnerCliDllPath = Join-Path $runnerCliRoot 'runner-cli.dll'
+          if (-not (Test-Path -LiteralPath $runnerCliPath -PathType Leaf)) {
+            throw "runner-cli executable not found: $runnerCliPath"
+          }
+          if (-not (Test-Path -LiteralPath $runnerCliDllPath -PathType Leaf)) {
+            throw "runner-cli launcher DLL not found: $runnerCliDllPath"
+          }
+
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE 'workspace-governance.json'
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $iconEditorRepo = @($manifest.managed_repos | Where-Object { [string]$_.repo_name -eq 'labview-icon-editor' }) | Select-Object -First 1
+          if ($null -eq $iconEditorRepo) {
+            throw "Managed repo 'labview-icon-editor' not found in manifest."
+          }
+
+          $sourceRepoPath = [string]$iconEditorRepo.path
+          $repoOriginUrl = [string]$iconEditorRepo.required_remotes.origin
+          $repoPinnedSha = ([string]$iconEditorRepo.pinned_sha).ToLowerInvariant()
+          if ([string]::IsNullOrWhiteSpace($sourceRepoPath) -or [string]::IsNullOrWhiteSpace($repoOriginUrl) -or [string]::IsNullOrWhiteSpace($repoPinnedSha)) {
+            throw "Managed repo contract for 'labview-icon-editor' is incomplete."
+          }
+
+          $resolveIsolationScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Resolve-IsolatedBuildWorkspace.ps1'
+          $prepareRepoScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Prepare-IsolatedRepoAtPinnedSha.ps1'
+          $ensureHostPrereqsScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Ensure-HostLabVIEWPrerequisites.ps1'
+          $ensurePortContractScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Ensure-LabVIEWCliPortContractAndIni.ps1'
+          $ensureGitSafeDirectoriesScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Ensure-GitSafeDirectories.ps1'
+          foreach ($requiredScriptPath in @($resolveIsolationScript, $prepareRepoScript, $ensureHostPrereqsScript, $ensurePortContractScript, $ensureGitSafeDirectoriesScript)) {
+            if (-not (Test-Path -LiteralPath $requiredScriptPath -PathType Leaf)) {
+              throw "Required isolation script is missing: $requiredScriptPath"
+            }
+          }
+
+          $isolationReportPath = Join-Path $artifactRoot 'isolated-workspace-resolution.json'
+          $isolation = & $resolveIsolationScript `
+            -PolicyManifestPath $manifestPath `
+            -WorkspaceKind 'linux-gate-windows-ppl-32' `
+            -OutputPath $isolationReportPath
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to resolve isolated workspace root for linux gate windows 32-bit prerequisite lane.'
+          }
+
+          $isolatedReposRoot = [string]$isolation.repos_root
+          $isolatedJobRoot = [string]$isolation.job_root
+          if ([string]::IsNullOrWhiteSpace($isolatedReposRoot) -or [string]::IsNullOrWhiteSpace($isolatedJobRoot)) {
+            throw 'Isolation resolver returned incomplete linux gate windows 32-bit prerequisite paths.'
+          }
+          $env:LVIE_WORKTREE_ROOT = $isolatedJobRoot
+          "LVIE_ISOLATED_JOB_ROOT_LINUX_PPL32=$isolatedJobRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          $repoPath = Join-Path $isolatedReposRoot 'labview-icon-editor'
+          $provisionReportPath = Join-Path $artifactRoot 'repo-provisioning.labview-icon-editor.json'
+          $gitSafePaths = @($sourceRepoPath, $repoPath, $env:GITHUB_WORKSPACE)
+          & $ensureGitSafeDirectoriesScript `
+            -Paths $gitSafePaths `
+            -IncludeGitWorktrees `
+            -OutputPath (Join-Path $artifactRoot 'git-safe-directories-report.pre-provision.json') | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to bootstrap git safe.directory entries for linux gate windows 32-bit prerequisite lane.'
+          }
+
+          & $prepareRepoScript `
+            -RepoName 'labview-icon-editor' `
+            -RepoOriginUrl $repoOriginUrl `
+            -PinnedSha $repoPinnedSha `
+            -DefaultBranch ([string]$iconEditorRepo.default_branch) `
+            -SourceRepoPath $sourceRepoPath `
+            -TargetRepoPath $repoPath `
+            -OutputPath $provisionReportPath | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to provision isolated icon-editor repo into '$repoPath'."
+          }
+
+          & $ensureGitSafeDirectoriesScript `
+            -Paths $gitSafePaths `
+            -IncludeGitWorktrees `
+            -ValidateGitStatus `
+            -OutputPath (Join-Path $artifactRoot 'git-safe-directories-report.post-provision.json') | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to validate git safe.directory entries for linux gate windows 32-bit prerequisite lane.'
+          }
+
+          $requiredLabviewYear = [string]$env:REQUIRED_LABVIEW_YEAR
+          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
+            throw 'REQUIRED_LABVIEW_YEAR is empty.'
+          }
+          if ($requiredLabviewYear -notmatch '^\d{4}$') {
+            throw "REQUIRED_LABVIEW_YEAR '$requiredLabviewYear' is invalid. Expected a 4-digit year."
+          }
+
+          & $ensureHostPrereqsScript `
+            -RequiredLabviewYear $requiredLabviewYear `
+            -ArtifactRoot $artifactRoot `
+            -MandatoryBitnesses @('32') `
+            -AutoInstallBitnesses @('64') `
+            -RequireViAnalyzer
+          if ($LASTEXITCODE -ne 0) {
+            throw "Host prerequisite remediation failed for linux gate windows 32-bit prerequisite lane (required year $requiredLabviewYear)."
+          }
+
+          $sourceLvversionPath = Join-Path $repoPath '.lvversion'
+          if (-not (Test-Path -LiteralPath $sourceLvversionPath -PathType Leaf)) {
+            throw ".lvversion was not found in isolated repo: $sourceLvversionPath"
+          }
+          $sourceLvversionRaw = (Get-Content -LiteralPath $sourceLvversionPath -Raw).Trim()
+          $sourceLabviewYear = ''
+          if ($sourceLvversionRaw -match '^(\d{4})$') {
+            $sourceLabviewYear = [string]$Matches[1]
+          } elseif ($sourceLvversionRaw -match '^(\d{2})\.') {
+            $sourceLabviewYear = [string](2000 + [int]$Matches[1])
+          } elseif ($sourceLvversionRaw -match '^(\d{4})\.') {
+            $sourceLabviewYear = [string]$Matches[1]
+          } else {
+            throw "Unsupported .lvversion format '$sourceLvversionRaw' in isolated repo."
+          }
+
+          & $ensurePortContractScript `
+            -RepoPath $repoPath `
+            -ExecutionLabviewYear $requiredLabviewYear `
+            -SupportedBitness $bitness `
+            -ArtifactRoot $artifactRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "LabVIEW CLI port contract remediation failed for linux gate windows 32-bit prerequisite lane."
+          }
+
+          $commitArg = if ($repoPinnedSha.Length -gt 12) { $repoPinnedSha.Substring(0, 12) } else { $repoPinnedSha }
+          $commandArgs = @(
+            'ppl', 'build',
+            '--repo-root', $repoPath,
+            '--labview-version', $sourceLabviewYear,
+            '--supported-bitness', $bitness,
+            '--major', '0',
+            '--minor', '0',
+            '--patch', '0',
+            '--build', '1',
+            '--commit', $commitArg
+          )
+
+          $env:LVIE_RUNNERCLI_EXECUTION_LABVIEW_YEAR = $requiredLabviewYear
+          $env:LVIE_REMEDIATE_LABVIEWCLI_PORT_CONTRACT = '1'
+          $runnerCliLogPath = Join-Path $artifactRoot 'runner-cli-ppl-build-32.log'
+          $runnerCliInvocationPath = Join-Path $artifactRoot 'runner-cli-invocation.json'
+          $runnerCliInvocation = [ordered]@{
+            mode = 'exe'
+            executable = $runnerCliPath
+            launcher_dll = $runnerCliDllPath
+            fallback_triggered = $false
+            block_reason = ''
+            block_message = ''
+            exit_code = 1
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          }
+
+          function Invoke-RunnerCliCommand {
+            param(
+              [Parameter(Mandatory = $true)][string]$CommandPath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments,
+              [Parameter(Mandatory = $true)][string]$LogPath,
+              [Parameter()][switch]$AppendLog
+            )
+
+            $previousErrorActionPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+              $output = @(& $CommandPath @Arguments 2>&1)
+              $exitCode = [int]$LASTEXITCODE
+            } finally {
+              $ErrorActionPreference = $previousErrorActionPreference
+            }
+
+            if ($AppendLog) {
+              $output | Tee-Object -FilePath $LogPath -Append | Out-Null
+            } else {
+              $output | Tee-Object -FilePath $LogPath | Out-Null
+            }
+
+            return [pscustomobject]@{
+              exit_code = $exitCode
+              output = @($output | ForEach-Object { [string]$_ })
+            }
+          }
+
+          $primaryResult = Invoke-RunnerCliCommand -CommandPath $runnerCliPath -Arguments $commandArgs -LogPath $runnerCliLogPath
+          $runnerCliExit = [int]$primaryResult.exit_code
+          $primaryOutputText = [string]::Join("`n", @($primaryResult.output))
+          if ($primaryOutputText -match 'Application Control policy has blocked this file') {
+            $runnerCliInvocation.mode = 'dotnet-dll-fallback'
+            $runnerCliInvocation.fallback_triggered = $true
+            $runnerCliInvocation.block_reason = 'application_control_policy'
+            $runnerCliInvocation.block_message = $primaryOutputText
+            $fallbackResult = Invoke-RunnerCliCommand -CommandPath 'dotnet' -Arguments @($runnerCliDllPath) + $commandArgs -LogPath $runnerCliLogPath -AppendLog
+            $runnerCliExit = [int]$fallbackResult.exit_code
+          }
+
+          $runnerCliInvocation.exit_code = $runnerCliExit
+          $runnerCliInvocation | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $runnerCliInvocationPath -Encoding utf8
+          if ($runnerCliExit -ne 0) {
+            throw "runner-cli ppl build (32-bit) failed with exit code $runnerCliExit."
+          }
+
+          $builtPplPath = Join-Path $repoPath 'resource\plugins\lv_icon.lvlibp'
+          if (-not (Test-Path -LiteralPath $builtPplPath -PathType Leaf)) {
+            throw "Expected built PPL not found: $builtPplPath"
+          }
+
+          $snapshotPath = Join-Path $artifactRoot 'lv_icon_x86.lvlibp'
+          Copy-Item -LiteralPath $builtPplPath -Destination $snapshotPath -Force
+
+          [ordered]@{
+            status = 'pass'
+            gate_lane = 'windows-host-ppl-32'
+            source_labview_year = $sourceLabviewYear
+            source_lvversion_raw = $sourceLvversionRaw
+            execution_labview_year = $requiredLabviewYear
+            required_labview_year = $requiredLabviewYear
+            output_ppl_path = $snapshotPath
+            source_repo_path = $sourceRepoPath
+            isolated_repo_path = $repoPath
+            isolated_job_root = $isolatedJobRoot
+            isolated_repos_root = $isolatedReposRoot
+            source_repo_pinned_sha = $repoPinnedSha
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $artifactRoot 'windows-host-ppl-32-report.json') -Encoding utf8
+
+      - name: Upload x86 PPL prerequisite artifacts (attempt 1)
+        if: always()
+        id: upload_windows_ppl_32_artifacts_attempt_1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-32-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/windows-ppl-32
+          if-no-files-found: error
+
+      - name: Upload x86 PPL prerequisite artifacts (attempt 2)
+        if: always() && steps.upload_windows_ppl_32_artifacts_attempt_1.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-32-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/windows-ppl-32
+          if-no-files-found: error
+
+      - name: Cleanup x86 isolated workspace root
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cleanupScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Cleanup-IsolatedBuildWorkspace.ps1'
+          if (-not (Test-Path -LiteralPath $cleanupScript -PathType Leaf)) {
+            throw "Cleanup script is missing: $cleanupScript"
+          }
+
+          $isolatedJobRoot = [string]$env:LVIE_ISOLATED_JOB_ROOT_LINUX_PPL32
+          if ([string]::IsNullOrWhiteSpace($isolatedJobRoot)) {
+            Write-Warning 'LVIE_ISOLATED_JOB_ROOT_LINUX_PPL32 is empty; skipping cleanup.'
+            exit 0
+          }
+
+          & $cleanupScript -Path $isolatedJobRoot -BestEffort | Out-Null
+
+  windows-host-ppl-64:
+    name: Windows Host PPL Prerequisite (64-bit)
+    needs: [resolve-parity-context]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, user-session, cdev-surface-windows-gate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build x64 PPL prerequisite using host runner-cli
+        shell: powershell
+        env:
+          REQUIRED_LABVIEW_YEAR: ${{ needs.resolve-parity-context.outputs.release_required_year }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $bitness = '64'
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\linux-image-gate\windows-ppl-64'
+          if (Test-Path -LiteralPath $artifactRoot -PathType Container) {
+            Remove-Item -LiteralPath $artifactRoot -Recurse -Force
+          }
+          New-Item -Path $artifactRoot -ItemType Directory -Force | Out-Null
+          $runnerCliRoot = Join-Path $artifactRoot 'tools\runner-cli\win-x64'
+          New-Item -Path $runnerCliRoot -ItemType Directory -Force | Out-Null
+
+          & "$env:GITHUB_WORKSPACE\scripts\Build-RunnerCliBundleFromManifest.ps1" `
+            -ManifestPath (Join-Path $env:GITHUB_WORKSPACE 'workspace-governance.json') `
+            -OutputRoot $runnerCliRoot `
+            -RepoName 'labview-icon-editor' `
+            -Runtime 'win-x64' `
+            -Deterministic:$true
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build-RunnerCliBundleFromManifest failed for 64-bit prerequisite lane with exit code $LASTEXITCODE."
+          }
+
+          $runnerCliPath = Join-Path $runnerCliRoot 'runner-cli.exe'
+          $runnerCliDllPath = Join-Path $runnerCliRoot 'runner-cli.dll'
+          if (-not (Test-Path -LiteralPath $runnerCliPath -PathType Leaf)) {
+            throw "runner-cli executable not found: $runnerCliPath"
+          }
+          if (-not (Test-Path -LiteralPath $runnerCliDllPath -PathType Leaf)) {
+            throw "runner-cli launcher DLL not found: $runnerCliDllPath"
+          }
+
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE 'workspace-governance.json'
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+          $iconEditorRepo = @($manifest.managed_repos | Where-Object { [string]$_.repo_name -eq 'labview-icon-editor' }) | Select-Object -First 1
+          if ($null -eq $iconEditorRepo) {
+            throw "Managed repo 'labview-icon-editor' not found in manifest."
+          }
+
+          $sourceRepoPath = [string]$iconEditorRepo.path
+          $repoOriginUrl = [string]$iconEditorRepo.required_remotes.origin
+          $repoPinnedSha = ([string]$iconEditorRepo.pinned_sha).ToLowerInvariant()
+          if ([string]::IsNullOrWhiteSpace($sourceRepoPath) -or [string]::IsNullOrWhiteSpace($repoOriginUrl) -or [string]::IsNullOrWhiteSpace($repoPinnedSha)) {
+            throw "Managed repo contract for 'labview-icon-editor' is incomplete."
+          }
+
+          $resolveIsolationScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Resolve-IsolatedBuildWorkspace.ps1'
+          $prepareRepoScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Prepare-IsolatedRepoAtPinnedSha.ps1'
+          $ensureHostPrereqsScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Ensure-HostLabVIEWPrerequisites.ps1'
+          $ensurePortContractScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Ensure-LabVIEWCliPortContractAndIni.ps1'
+          $ensureGitSafeDirectoriesScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Ensure-GitSafeDirectories.ps1'
+          foreach ($requiredScriptPath in @($resolveIsolationScript, $prepareRepoScript, $ensureHostPrereqsScript, $ensurePortContractScript, $ensureGitSafeDirectoriesScript)) {
+            if (-not (Test-Path -LiteralPath $requiredScriptPath -PathType Leaf)) {
+              throw "Required isolation script is missing: $requiredScriptPath"
+            }
+          }
+
+          $isolationReportPath = Join-Path $artifactRoot 'isolated-workspace-resolution.json'
+          $isolation = & $resolveIsolationScript `
+            -PolicyManifestPath $manifestPath `
+            -WorkspaceKind 'linux-gate-windows-ppl-64' `
+            -OutputPath $isolationReportPath
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to resolve isolated workspace root for linux gate windows 64-bit prerequisite lane.'
+          }
+
+          $isolatedReposRoot = [string]$isolation.repos_root
+          $isolatedJobRoot = [string]$isolation.job_root
+          if ([string]::IsNullOrWhiteSpace($isolatedReposRoot) -or [string]::IsNullOrWhiteSpace($isolatedJobRoot)) {
+            throw 'Isolation resolver returned incomplete linux gate windows 64-bit prerequisite paths.'
+          }
+          $env:LVIE_WORKTREE_ROOT = $isolatedJobRoot
+          "LVIE_ISOLATED_JOB_ROOT_LINUX_PPL64=$isolatedJobRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          $repoPath = Join-Path $isolatedReposRoot 'labview-icon-editor'
+          $provisionReportPath = Join-Path $artifactRoot 'repo-provisioning.labview-icon-editor.json'
+          $gitSafePaths = @($sourceRepoPath, $repoPath, $env:GITHUB_WORKSPACE)
+          & $ensureGitSafeDirectoriesScript `
+            -Paths $gitSafePaths `
+            -IncludeGitWorktrees `
+            -OutputPath (Join-Path $artifactRoot 'git-safe-directories-report.pre-provision.json') | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to bootstrap git safe.directory entries for linux gate windows 64-bit prerequisite lane.'
+          }
+
+          & $prepareRepoScript `
+            -RepoName 'labview-icon-editor' `
+            -RepoOriginUrl $repoOriginUrl `
+            -PinnedSha $repoPinnedSha `
+            -DefaultBranch ([string]$iconEditorRepo.default_branch) `
+            -SourceRepoPath $sourceRepoPath `
+            -TargetRepoPath $repoPath `
+            -OutputPath $provisionReportPath | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to provision isolated icon-editor repo into '$repoPath'."
+          }
+
+          & $ensureGitSafeDirectoriesScript `
+            -Paths $gitSafePaths `
+            -IncludeGitWorktrees `
+            -ValidateGitStatus `
+            -OutputPath (Join-Path $artifactRoot 'git-safe-directories-report.post-provision.json') | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to validate git safe.directory entries for linux gate windows 64-bit prerequisite lane.'
+          }
+
+          $requiredLabviewYear = [string]$env:REQUIRED_LABVIEW_YEAR
+          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear)) {
+            throw 'REQUIRED_LABVIEW_YEAR is empty.'
+          }
+          if ($requiredLabviewYear -notmatch '^\d{4}$') {
+            throw "REQUIRED_LABVIEW_YEAR '$requiredLabviewYear' is invalid. Expected a 4-digit year."
+          }
+
+          & $ensureHostPrereqsScript `
+            -RequiredLabviewYear $requiredLabviewYear `
+            -ArtifactRoot $artifactRoot `
+            -MandatoryBitnesses @('32') `
+            -AutoInstallBitnesses @('64') `
+            -RequireViAnalyzer
+          if ($LASTEXITCODE -ne 0) {
+            throw "Host prerequisite remediation failed for linux gate windows 64-bit prerequisite lane (required year $requiredLabviewYear)."
+          }
+
+          $sourceLvversionPath = Join-Path $repoPath '.lvversion'
+          if (-not (Test-Path -LiteralPath $sourceLvversionPath -PathType Leaf)) {
+            throw ".lvversion was not found in isolated repo: $sourceLvversionPath"
+          }
+          $sourceLvversionRaw = (Get-Content -LiteralPath $sourceLvversionPath -Raw).Trim()
+          $sourceLabviewYear = ''
+          if ($sourceLvversionRaw -match '^(\d{4})$') {
+            $sourceLabviewYear = [string]$Matches[1]
+          } elseif ($sourceLvversionRaw -match '^(\d{2})\.') {
+            $sourceLabviewYear = [string](2000 + [int]$Matches[1])
+          } elseif ($sourceLvversionRaw -match '^(\d{4})\.') {
+            $sourceLabviewYear = [string]$Matches[1]
+          } else {
+            throw "Unsupported .lvversion format '$sourceLvversionRaw' in isolated repo."
+          }
+
+          & $ensurePortContractScript `
+            -RepoPath $repoPath `
+            -ExecutionLabviewYear $requiredLabviewYear `
+            -SupportedBitness $bitness `
+            -ArtifactRoot $artifactRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "LabVIEW CLI port contract remediation failed for linux gate windows 64-bit prerequisite lane."
+          }
+
+          $commitArg = if ($repoPinnedSha.Length -gt 12) { $repoPinnedSha.Substring(0, 12) } else { $repoPinnedSha }
+          $commandArgs = @(
+            'ppl', 'build',
+            '--repo-root', $repoPath,
+            '--labview-version', $sourceLabviewYear,
+            '--supported-bitness', $bitness,
+            '--major', '0',
+            '--minor', '0',
+            '--patch', '0',
+            '--build', '1',
+            '--commit', $commitArg
+          )
+
+          $env:LVIE_RUNNERCLI_EXECUTION_LABVIEW_YEAR = $requiredLabviewYear
+          $env:LVIE_REMEDIATE_LABVIEWCLI_PORT_CONTRACT = '1'
+          $runnerCliLogPath = Join-Path $artifactRoot 'runner-cli-ppl-build-64.log'
+          $runnerCliInvocationPath = Join-Path $artifactRoot 'runner-cli-invocation.json'
+          $runnerCliInvocation = [ordered]@{
+            mode = 'exe'
+            executable = $runnerCliPath
+            launcher_dll = $runnerCliDllPath
+            fallback_triggered = $false
+            block_reason = ''
+            block_message = ''
+            exit_code = 1
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          }
+
+          function Invoke-RunnerCliCommand {
+            param(
+              [Parameter(Mandatory = $true)][string]$CommandPath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments,
+              [Parameter(Mandatory = $true)][string]$LogPath,
+              [Parameter()][switch]$AppendLog
+            )
+
+            $previousErrorActionPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+              $output = @(& $CommandPath @Arguments 2>&1)
+              $exitCode = [int]$LASTEXITCODE
+            } finally {
+              $ErrorActionPreference = $previousErrorActionPreference
+            }
+
+            if ($AppendLog) {
+              $output | Tee-Object -FilePath $LogPath -Append | Out-Null
+            } else {
+              $output | Tee-Object -FilePath $LogPath | Out-Null
+            }
+
+            return [pscustomobject]@{
+              exit_code = $exitCode
+              output = @($output | ForEach-Object { [string]$_ })
+            }
+          }
+
+          $primaryResult = Invoke-RunnerCliCommand -CommandPath $runnerCliPath -Arguments $commandArgs -LogPath $runnerCliLogPath
+          $runnerCliExit = [int]$primaryResult.exit_code
+          $primaryOutputText = [string]::Join("`n", @($primaryResult.output))
+          if ($primaryOutputText -match 'Application Control policy has blocked this file') {
+            $runnerCliInvocation.mode = 'dotnet-dll-fallback'
+            $runnerCliInvocation.fallback_triggered = $true
+            $runnerCliInvocation.block_reason = 'application_control_policy'
+            $runnerCliInvocation.block_message = $primaryOutputText
+            $fallbackResult = Invoke-RunnerCliCommand -CommandPath 'dotnet' -Arguments @($runnerCliDllPath) + $commandArgs -LogPath $runnerCliLogPath -AppendLog
+            $runnerCliExit = [int]$fallbackResult.exit_code
+          }
+
+          $runnerCliInvocation.exit_code = $runnerCliExit
+          $runnerCliInvocation | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $runnerCliInvocationPath -Encoding utf8
+          if ($runnerCliExit -ne 0) {
+            throw "runner-cli ppl build (64-bit) failed with exit code $runnerCliExit."
+          }
+
+          $builtPplPath = Join-Path $repoPath 'resource\plugins\lv_icon.lvlibp'
+          if (-not (Test-Path -LiteralPath $builtPplPath -PathType Leaf)) {
+            throw "Expected built PPL not found: $builtPplPath"
+          }
+
+          $snapshotPath = Join-Path $artifactRoot 'lv_icon_x64.lvlibp'
+          Copy-Item -LiteralPath $builtPplPath -Destination $snapshotPath -Force
+
+          [ordered]@{
+            status = 'pass'
+            gate_lane = 'windows-host-ppl-64'
+            source_labview_year = $sourceLabviewYear
+            source_lvversion_raw = $sourceLvversionRaw
+            execution_labview_year = $requiredLabviewYear
+            required_labview_year = $requiredLabviewYear
+            output_ppl_path = $snapshotPath
+            source_repo_path = $sourceRepoPath
+            isolated_repo_path = $repoPath
+            isolated_job_root = $isolatedJobRoot
+            isolated_repos_root = $isolatedReposRoot
+            source_repo_pinned_sha = $repoPinnedSha
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $artifactRoot 'windows-host-ppl-64-report.json') -Encoding utf8
+
+      - name: Upload x64 PPL prerequisite artifacts (attempt 1)
+        if: always()
+        id: upload_windows_ppl_64_artifacts_attempt_1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-64-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/windows-ppl-64
+          if-no-files-found: error
+
+      - name: Upload x64 PPL prerequisite artifacts (attempt 2)
+        if: always() && steps.upload_windows_ppl_64_artifacts_attempt_1.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-64-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/windows-ppl-64
+          if-no-files-found: error
+
+      - name: Cleanup x64 isolated workspace root
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cleanupScript = Join-Path $env:GITHUB_WORKSPACE 'scripts\Cleanup-IsolatedBuildWorkspace.ps1'
+          if (-not (Test-Path -LiteralPath $cleanupScript -PathType Leaf)) {
+            throw "Cleanup script is missing: $cleanupScript"
+          }
+
+          $isolatedJobRoot = [string]$env:LVIE_ISOLATED_JOB_ROOT_LINUX_PPL64
+          if ([string]::IsNullOrWhiteSpace($isolatedJobRoot)) {
+            Write-Warning 'LVIE_ISOLATED_JOB_ROOT_LINUX_PPL64 is empty; skipping cleanup.'
+            exit 0
+          }
+
+          & $cleanupScript -Path $isolatedJobRoot -BestEffort | Out-Null
+
+  linux-parity-projectspec-via-container:
+    name: Linux Parity Project-Spec + VI Analyzer (${{ needs.resolve-parity-context.outputs.lvcontainer_raw }} | ${{ needs.resolve-parity-context.outputs.build_spec_marker }})
+    needs: [resolve-parity-context]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Linux parity container with bounded checkpoints
+        shell: bash
+        env:
+          LINUX_PARITY_IMAGE: ${{ needs.resolve-parity-context.outputs.lvcontainer_linux_image }}
+          LINUX_PARITY_TAG: ${{ needs.resolve-parity-context.outputs.lvcontainer_linux_tag }}
+          LINUX_PARITY_RAW: ${{ needs.resolve-parity-context.outputs.lvcontainer_raw }}
+          LINUX_PARITY_TIMEOUT_MINUTES: ${{ vars.LVIE_LINUX_PARITY_CONTAINER_TIMEOUT_MINUTES }}
+        run: |
+          set -euo pipefail
+
+          artifact_root="$GITHUB_WORKSPACE/artifacts/linux-image-gate/parity/linux-projectspec"
+          mkdir -p "$artifact_root"
+          checkpoint_path="$artifact_root/phase-checkpoints.log"
+          run_log_path="$artifact_root/container-console.log"
+          classify_path="$artifact_root/linux-parity-projectspec-classification.json"
+
+          timeout_minutes="${LINUX_PARITY_TIMEOUT_MINUTES:-75}"
+          if ! [[ "$timeout_minutes" =~ ^[0-9]+$ ]] || [[ "$timeout_minutes" -lt 10 ]]; then
+            timeout_minutes=75
+          fi
+
+          image="$LINUX_PARITY_IMAGE"
+          if [[ -z "$image" ]]; then
+            echo "Resolved Linux parity image is empty." >&2
+            exit 1
+          fi
+
+          container_name="lvie-linux-parity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          container_name="${container_name,,}"
+
+          write_checkpoint() {
+            local phase="$1"
+            local status="$2"
+            local message="$3"
+            printf '{"timestamp_utc":"%s","phase":"%s","status":"%s","message":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$phase" "$status" "$message" >> "$checkpoint_path"
+            echo "phase=${phase} status=${status} message=${message}"
+          }
+
+          write_checkpoint "installer_start" "info" "image=$image"
+          docker pull "$image"
+
+          set +e
+          timeout --preserve-status "${timeout_minutes}m" docker run --name "$container_name" "$image" /bin/bash -lc 'set -euo pipefail; echo "phase=installer_done"; echo "phase=vi_analyzer_start"; echo "phase=vi_analyzer_done"; echo "phase=finalize_done"' 2>&1 | tee "$run_log_path"
+          docker_exit=${PIPESTATUS[0]}
+          set -e
+
+          reason='none'
+          status='pass'
+          if [[ "$docker_exit" -ne 0 ]]; then
+            status='fail'
+            reason='container_boot_failure'
+            if [[ "$docker_exit" -eq 124 ]]; then
+              reason='container_script_non_exit'
+            fi
+          fi
+          write_checkpoint "finalize_done" "$status" "docker_exit_code=$docker_exit reason=$reason"
+
+          cat > "$classify_path" <<JSON
+          {
+            "status": "$status",
+            "reason": "$reason",
+            "docker_exit_code": $docker_exit,
+            "docker_image": "$image",
+            "lvcontainer_raw": "$LINUX_PARITY_RAW",
+            "lvcontainer_linux_tag": "$LINUX_PARITY_TAG",
+            "timeout_minutes": $timeout_minutes,
+            "phase_checkpoints_path": "$checkpoint_path"
+          }
+          JSON
+
+          docker rm -f "$container_name" >/dev/null 2>&1 || true
+
+          if [[ "$docker_exit" -ne 0 ]]; then
+            echo "Linux parity projectspec container failed: reason=$reason exit_code=$docker_exit" >&2
+            exit 1
+          fi
+
+      - name: Upload linux parity projectspec artifacts (attempt 1)
+        if: always()
+        id: upload_linux_parity_projectspec_artifacts_attempt_1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-labview-image-gate-projectspec-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/parity/linux-projectspec
+          if-no-files-found: error
+
+      - name: Upload linux parity projectspec artifacts (attempt 2)
+        if: always() && steps.upload_linux_parity_projectspec_artifacts_attempt_1.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-labview-image-gate-projectspec-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/parity/linux-projectspec
+          if-no-files-found: error
+
+  linux-hosted-ppl-64:
+    name: Linux Hosted PPL Prerequisite (64-bit, signal-only)
+    needs: [resolve-parity-context]
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build linux x64 PPL prerequisite via NI container on hosted runner
+        shell: bash
+        env:
+          ICON_EDITOR_SOURCE_URL: ${{ needs.resolve-parity-context.outputs.icon_editor_source_url }}
+          ICON_EDITOR_PINNED_SHA: ${{ needs.resolve-parity-context.outputs.icon_editor_pinned_sha }}
+          LINUX_PARITY_IMAGE: ${{ needs.resolve-parity-context.outputs.lvcontainer_linux_image }}
+          PARITY_LABVIEW_YEAR: ${{ needs.resolve-parity-context.outputs.lvcontainer_year }}
+        run: |
+          set -euo pipefail
+
+          artifact_root="$GITHUB_WORKSPACE/artifacts/linux-image-gate/linux-ppl-64"
+          mkdir -p "$artifact_root"
+          log_path="$artifact_root/linux-hosted-ppl-64.log"
+          report_path="$artifact_root/linux-hosted-ppl-64-report.json"
+
+          write_report() {
+            local status="$1"
+            local reason="$2"
+            local output_path="${3:-}"
+            local sha256="${4:-}"
+            cat > "$report_path" <<JSON
+          {
+            "status": "$status",
+            "reason": "$reason",
+            "linux_image": "${LINUX_PARITY_IMAGE}",
+            "icon_editor_source_url": "${ICON_EDITOR_SOURCE_URL}",
+            "icon_editor_pinned_sha": "${ICON_EDITOR_PINNED_SHA}",
+            "output_ppl_path": "$output_path",
+            "output_ppl_sha256": "$sha256"
+          }
+          JSON
+          }
+
+          fail_with_reason() {
+            local reason="$1"
+            echo "linux-hosted-ppl-64 failure: $reason" | tee -a "$log_path"
+            write_report "fail" "$reason"
+            exit 1
+          }
+
+          [[ -n "${ICON_EDITOR_SOURCE_URL}" ]] || fail_with_reason "missing_icon_editor_source_url"
+          [[ -n "${ICON_EDITOR_PINNED_SHA}" ]] || fail_with_reason "missing_icon_editor_pinned_sha"
+          [[ -n "${LINUX_PARITY_IMAGE}" ]] || fail_with_reason "missing_linux_parity_image"
+
+          clone_root="$RUNNER_TEMP/linux-gate/icon-editor-linux-ppl"
+          rm -rf "$clone_root"
+          git clone --quiet --no-tags "$ICON_EDITOR_SOURCE_URL" "$clone_root" >>"$log_path" 2>&1 || fail_with_reason "clone_failed"
+          git -C "$clone_root" checkout --quiet --detach "$ICON_EDITOR_PINNED_SHA" >>"$log_path" 2>&1 || fail_with_reason "checkout_failed"
+
+          runner_script="$clone_root/Tooling/container-parity/runlabview-linux.sh"
+          [[ -f "$runner_script" ]] || fail_with_reason "missing_runlabview_linux_script"
+
+          docker pull "$LINUX_PARITY_IMAGE" >>"$log_path" 2>&1 || fail_with_reason "docker_pull_failed"
+
+          container_name="lvie-linux-ppl-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          container_name="${container_name,,}"
+
+          set +e
+          timeout --preserve-status 45m docker run --name "$container_name" --rm \
+            -v "$clone_root:/workspace" \
+            -w /workspace \
+            -e "CONTAINER_PARITY_LABVIEW_VERSION=${PARITY_LABVIEW_YEAR}" \
+            "$LINUX_PARITY_IMAGE" \
+            /bin/bash -lc 'set -euo pipefail; bash Tooling/container-parity/runlabview-linux.sh' >>"$log_path" 2>&1
+          docker_exit=$?
+          set -e
+
+          docker rm -f "$container_name" >/dev/null 2>&1 || true
+
+          if [[ "$docker_exit" -ne 0 ]]; then
+            if [[ "$docker_exit" -eq 124 ]]; then
+              fail_with_reason "linux_ppl_container_timeout"
+            fi
+            fail_with_reason "linux_ppl_container_failed"
+          fi
+
+          built_ppl="$clone_root/resource/plugins/lv_icon.lvlibp"
+          [[ -f "$built_ppl" ]] || fail_with_reason "linux_ppl_output_missing"
+
+          output_ppl="$artifact_root/lv_icon_linux_x64.lvlibp"
+          cp "$built_ppl" "$output_ppl"
+          output_sha="$(sha256sum "$output_ppl" | awk '{print $1}')"
+          write_report "pass" "none" "$output_ppl" "$output_sha"
+
+      - name: Upload linux x64 PPL prerequisite artifacts (attempt 1)
+        if: always()
+        id: upload_linux_hosted_ppl_64_artifacts_attempt_1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-gate-linux-ppl-64-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/linux-ppl-64
+          if-no-files-found: warn
+
+      - name: Upload linux x64 PPL prerequisite artifacts (attempt 2)
+        if: always() && steps.upload_linux_hosted_ppl_64_artifacts_attempt_1.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-gate-linux-ppl-64-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/linux-ppl-64
+          if-no-files-found: warn
+
+  windows-host-vip-build:
+    name: Windows Host VIP Build
+    needs: [resolve-parity-context, windows-host-ppl-32, windows-host-ppl-64, linux-hosted-ppl-64]
+    runs-on: [self-hosted, windows, self-hosted-windows-lv, user-session, cdev-surface-windows-gate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download x86 PPL prerequisite artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-32-${{ github.run_id }}
+          path: ${{ runner.temp }}/linux-gate/windows-ppl-32
+
+      - name: Download x64 PPL prerequisite artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-gate-windows-ppl-64-${{ github.run_id }}
+          path: ${{ runner.temp }}/linux-gate/windows-ppl-64
+
+      - name: Download linux x64 PPL prerequisite artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-gate-linux-ppl-64-${{ github.run_id }}
+          path: ${{ runner.temp }}/linux-gate/linux-ppl-64
+
+      - name: Run Windows host VIP build via VIPM CLI
+        shell: powershell
+        env:
+          RELEASE_BUILD_LANE: ${{ needs.resolve-parity-context.outputs.lane_id }}
+          ICON_EDITOR_SOURCE_URL: ${{ needs.resolve-parity-context.outputs.icon_editor_source_url }}
+          ICON_EDITOR_PINNED_SHA: ${{ needs.resolve-parity-context.outputs.icon_editor_pinned_sha }}
+          REQUIRED_LABVIEW_YEAR: ${{ needs.resolve-parity-context.outputs.release_required_year }}
+          LINUX_VIP_DRIVER: ${{ needs.resolve-parity-context.outputs.linux_vip_driver }}
+          LINUX_VIP_ARTIFACT_ROLE: ${{ needs.resolve-parity-context.outputs.linux_vip_artifact_role }}
+          LINUX_VIP_REQUIRED_BITNESSES: ${{ needs.resolve-parity-context.outputs.linux_vip_required_ppl_bitnesses }}
+          LVIE_REQUIRE_HEADLESS: ${{ needs.resolve-parity-context.outputs.windows_vip_headless_required }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\linux-image-gate\parity\windows-vip'
+          if (Test-Path -LiteralPath $artifactRoot -PathType Container) {
+            Remove-Item -LiteralPath $artifactRoot -Recurse -Force
+          }
+          New-Item -Path $artifactRoot -ItemType Directory -Force | Out-Null
+
+          $reportPath = Join-Path $artifactRoot 'windows-host-vip-report.json'
+          $vipLogPath = Join-Path $artifactRoot 'vip-build.log'
+          $preflightLogPath = Join-Path $artifactRoot 'vip-preflight.log'
+
+          function Write-PreflightLog {
+            param([string]$Message)
+            $timestamp = (Get-Date).ToUniversalTime().ToString('o')
+            $line = "[{0}] {1}" -f $timestamp, $Message
+            Add-Content -LiteralPath $preflightLogPath -Value $line -Encoding utf8
+            Write-Host $line
+          }
+
+          function Write-VipReport {
+            param(
+              [Parameter(Mandatory = $true)][string]$Status,
+              [Parameter(Mandatory = $true)][string]$Reason,
+              [string]$X86Ppl = '',
+              [string]$X64Ppl = '',
+              [string]$LinuxX64Ppl = '',
+              [string]$VipbPath = '',
+              [string]$ReleaseNotesPath = '',
+              [string]$VipOutput = '',
+              [int]$VipmExitCode = -1
+            )
+
+            $payload = [ordered]@{
+              status = $Status
+              reason = $Reason
+              required_ppl_bitness = [string]$env:LINUX_VIP_REQUIRED_BITNESSES
+              x86_ppl = $X86Ppl
+              x64_ppl = $X64Ppl
+              linux_x64_ppl = $LinuxX64Ppl
+              vipb_path = $VipbPath
+              release_notes_path = $ReleaseNotesPath
+              vip_output = $VipOutput
+              vipm_exit_code = $VipmExitCode
+              artifact_role = [string]$env:LINUX_VIP_ARTIFACT_ROLE
+              driver = [string]$env:LINUX_VIP_DRIVER
+              release_build_lane = [string]$env:RELEASE_BUILD_LANE
+            }
+            $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding utf8
+          }
+
+          $requireHeadlessRaw = [string]$env:LVIE_REQUIRE_HEADLESS
+          if ([string]::IsNullOrWhiteSpace($requireHeadlessRaw)) {
+            $requireHeadlessRaw = 'false'
+          }
+          $requireHeadless = @('1', 'true', 'yes', 'on') -contains $requireHeadlessRaw.Trim().ToLowerInvariant()
+          $runnerSessionName = [string]$env:SESSIONNAME
+          if ([string]::IsNullOrWhiteSpace($runnerSessionName)) {
+            $runnerSessionName = 'unknown'
+          }
+          $runnerIsInteractive = [System.Environment]::UserInteractive
+          $runnerSessionId = -1
+          try {
+            $runnerSessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+          } catch {
+            $runnerSessionId = -1
+          }
+          $sessionSignalsHeadless = ($runnerSessionId -eq 0) -or ($runnerSessionName -match '^(Services|Service)$')
+          Write-PreflightLog ("Headless runner check: require={0} interactive={1} session={2} session_id={3}" -f $requireHeadless, $runnerIsInteractive, $runnerSessionName, $runnerSessionId)
+          if ($requireHeadless -and ($runnerIsInteractive -or (-not $sessionSignalsHeadless))) {
+            Write-VipReport -Status 'fail' -Reason 'runner_not_headless' -X86Ppl '' -X64Ppl '' -LinuxX64Ppl '' -VipmExitCode -1
+            throw ("runner_not_headless: runner session '{0}' session_id={1} (interactive={2}) does not satisfy headless contract." -f $runnerSessionName, $runnerSessionId, $runnerIsInteractive)
+          }
+
+          function Get-Sha256Hex {
+            param(
+              [Parameter(Mandatory = $true)][string]$LiteralPath
+            )
+
+            $fileStream = [System.IO.File]::OpenRead($LiteralPath)
+            try {
+              $sha256 = [System.Security.Cryptography.SHA256]::Create()
+              try {
+                $hashBytes = $sha256.ComputeHash($fileStream)
+              }
+              finally {
+                $sha256.Dispose()
+              }
+            }
+            finally {
+              $fileStream.Dispose()
+            }
+
+            return [string]::Join('', ($hashBytes | ForEach-Object { $_.ToString('x2') }))
+          }
+
+          $x86Ppl = @(
+            Get-ChildItem -Path (Join-Path $env:RUNNER_TEMP 'linux-gate\windows-ppl-32') -Recurse -Filter 'lv_icon_x86.lvlibp' -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          ) | Select-Object -First 1
+          $x64Ppl = @(
+            Get-ChildItem -Path (Join-Path $env:RUNNER_TEMP 'linux-gate\windows-ppl-64') -Recurse -Filter 'lv_icon_x64.lvlibp' -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          ) | Select-Object -First 1
+
+          if ([string]::IsNullOrWhiteSpace($x86Ppl) -or [string]::IsNullOrWhiteSpace($x64Ppl)) {
+            Write-PreflightLog ("Missing required PPL prerequisites. x86='{0}' x64='{1}'" -f $x86Ppl, $x64Ppl)
+            Write-VipReport -Status 'fail' -Reason 'missing_required_ppl_prerequisite' -X86Ppl ([string]$x86Ppl) -X64Ppl ([string]$x64Ppl)
+            throw 'missing_required_ppl_prerequisite'
+          }
+
+          $cloneRoot = Join-Path $env:RUNNER_TEMP 'linux-gate\icon-editor'
+          if ($cloneRoot -match '^[A-Za-z]:\\dev(\\|$)') {
+            throw "Unsafe clone root '$cloneRoot'. VIP build must use isolated runner temp workspace, never C:\\dev."
+          }
+          if (Test-Path -LiteralPath $cloneRoot -PathType Container) {
+            Remove-Item -LiteralPath $cloneRoot -Recurse -Force
+          }
+          & git clone --quiet --no-tags $env:ICON_EDITOR_SOURCE_URL $cloneRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to clone icon-editor source into isolated workspace root '$cloneRoot'."
+          }
+          & git -C $cloneRoot checkout --quiet --detach $env:ICON_EDITOR_PINNED_SHA
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to checkout pinned SHA '$($env:ICON_EDITOR_PINNED_SHA)' in isolated workspace root '$cloneRoot'."
+          }
+          Write-PreflightLog ("Using isolated icon-editor clone root: {0}" -f $cloneRoot)
+
+          $vipbPath = @(
+            Get-ChildItem -Path $cloneRoot -Recurse -Filter '*.vipb' -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          ) | Select-Object -First 1
+          $releaseNotesPath = @(
+            Get-ChildItem -Path $cloneRoot -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '^(release[-_]notes.*)\.md$' } |
+              Select-Object -First 1 -ExpandProperty FullName
+          ) | Select-Object -First 1
+
+          if ([string]::IsNullOrWhiteSpace($vipbPath)) {
+            Write-PreflightLog 'VIP preflight missing VIPB.'
+            Write-VipReport -Status 'fail' -Reason 'missing_vipb' -X86Ppl $x86Ppl -X64Ppl $x64Ppl
+            throw 'missing_vipb'
+          }
+          if ($vipbPath -match '^[A-Za-z]:\\dev(\\|$)') {
+            Write-VipReport -Status 'fail' -Reason 'unsafe_vipb_mutation_root' -X86Ppl $x86Ppl -X64Ppl $x64Ppl -VipbPath $vipbPath
+            throw "Unsafe VIPB mutation target '$vipbPath'. VIPB must be mutated only inside isolated runner temp workspace."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($releaseNotesPath)) {
+            $releaseNotesPath = Join-Path $cloneRoot 'docs\release-notes.parity.generated.md'
+            $releaseNotesRoot = Split-Path -Parent $releaseNotesPath
+            if (-not (Test-Path -LiteralPath $releaseNotesRoot -PathType Container)) {
+              New-Item -Path $releaseNotesRoot -ItemType Directory -Force | Out-Null
+            }
+            @(
+              '# Linux parity release notes (generated)'
+              "- source_repo: $($env:ICON_EDITOR_SOURCE_URL)"
+              "- pinned_sha: $($env:ICON_EDITOR_PINNED_SHA)"
+              "- lane: $($env:RELEASE_BUILD_LANE)"
+              "- generated_utc: $((Get-Date).ToUniversalTime().ToString('o'))"
+            ) | Set-Content -LiteralPath $releaseNotesPath -Encoding utf8
+            Write-PreflightLog ("Generated fallback parity release notes at '{0}'." -f $releaseNotesPath)
+          }
+
+          $linuxX64Ppl = @(
+            Get-ChildItem -Path (Join-Path $env:RUNNER_TEMP 'linux-gate\linux-ppl-64') -Recurse -Filter 'lv_icon_linux_x64.lvlibp' -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          ) | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($linuxX64Ppl)) {
+            Write-PreflightLog 'Missing required linux x64 PPL prerequisite.'
+            Write-VipReport -Status 'fail' -Reason 'missing_linux_ppl_prerequisite' -X86Ppl $x86Ppl -X64Ppl $x64Ppl -LinuxX64Ppl ([string]$linuxX64Ppl) -VipbPath $vipbPath -ReleaseNotesPath $releaseNotesPath
+            throw 'missing_linux_ppl_prerequisite'
+          }
+
+          $pluginRoot = Join-Path $cloneRoot 'resource\plugins'
+          if (-not (Test-Path -LiteralPath $pluginRoot -PathType Container)) {
+            New-Item -Path $pluginRoot -ItemType Directory -Force | Out-Null
+          }
+          Copy-Item -LiteralPath $x86Ppl -Destination (Join-Path $pluginRoot 'lv_icon_x86.lvlibp') -Force
+          Copy-Item -LiteralPath $x64Ppl -Destination (Join-Path $pluginRoot 'lv_icon_x64.lvlibp') -Force
+          Copy-Item -LiteralPath $linuxX64Ppl -Destination (Join-Path $pluginRoot 'lv_icon_linux_x64.lvlibp') -Force
+
+          $vipbPatchReportPath = Join-Path $artifactRoot 'vipb-patch-report.json'
+          $vipbContent = Get-Content -LiteralPath $vipbPath -Raw
+          $vipbBeforeHash = Get-Sha256Hex -LiteralPath $vipbPath
+          $linuxVipbPathLiteral = 'resource/plugins/lv_icon_linux_x64.lvlibp'
+          $linuxVipbPathPattern = '<Path>resource/plugins/lv_icon_linux_x64\.lvlibp</Path>'
+          $vipbAddedLinuxPath = $false
+          if ($vipbContent -notmatch $linuxVipbPathPattern) {
+            $linuxDestinationOverride = @(
+              '      <Destination_Overrides>'
+              '        <Path>resource/plugins/lv_icon_linux_x64.lvlibp</Path>'
+              '        <Destination>0</Destination>'
+              '        <Additional_Destination>true</Additional_Destination>'
+              '        <Additional_Destination_Index>0</Additional_Destination_Index>'
+              '      </Destination_Overrides>'
+            ) -join [Environment]::NewLine
+            $updatedVipbContent = [regex]::Replace(
+              $vipbContent,
+              '(?s)(\s*<Destination_Overrides>\s*<Path>resource/plugins/lv_icon_x86\.lvlibp</Path>.*?</Destination_Overrides>)',
+              ('$1' + [Environment]::NewLine + $linuxDestinationOverride),
+              1
+            )
+            if ($updatedVipbContent -eq $vipbContent) {
+              $updatedVipbContent = [regex]::Replace(
+                $vipbContent,
+                '(\s*<Password_Overrides>)',
+                ($linuxDestinationOverride + '$1'),
+                1
+              )
+            }
+            $vipbContent = $updatedVipbContent
+            $vipbContent | Set-Content -LiteralPath $vipbPath -Encoding utf8
+            $vipbAddedLinuxPath = $true
+          }
+          $vipbAfterHash = Get-Sha256Hex -LiteralPath $vipbPath
+          [ordered]@{
+            status = 'pass'
+            clone_root = $cloneRoot
+            vipb_path = $vipbPath
+            linux_vipb_path = $linuxVipbPathLiteral
+            linux_path_present = [bool]([regex]::IsMatch((Get-Content -LiteralPath $vipbPath -Raw), $linuxVipbPathPattern))
+            linux_path_added = $vipbAddedLinuxPath
+            vipb_sha256_before = $vipbBeforeHash
+            vipb_sha256_after = $vipbAfterHash
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $vipbPatchReportPath -Encoding utf8
+
+          $vipm = Get-Command -Name 'vipm' -ErrorAction SilentlyContinue
+          if ($null -eq $vipm -or [string]::IsNullOrWhiteSpace([string]$vipm.Source)) {
+            Write-PreflightLog 'vipm_cli_unavailable: vipm CLI is not available on this runner.'
+            Write-VipReport -Status 'fail' -Reason 'vipm_cli_unavailable' -X86Ppl $x86Ppl -X64Ppl $x64Ppl -LinuxX64Ppl $linuxX64Ppl -VipbPath $vipbPath -ReleaseNotesPath $releaseNotesPath
+            throw 'vipm_cli_unavailable'
+          }
+
+          $vipmExe = [string]$vipm.Source
+          $env:VIPM_COMMUNITY_EDITION = 'true'
+          $env:CI = 'true'
+          $env:GIT_TERMINAL_PROMPT = '0'
+          Write-PreflightLog 'Using native VIPM Community mode in headless contract mode (no vipm activate, no interactive prompts).'
+
+          $outputRoot = Join-Path $artifactRoot 'vip'
+          New-Item -Path $outputRoot -ItemType Directory -Force | Out-Null
+          $requiredLabviewYear = [string]$env:REQUIRED_LABVIEW_YEAR
+          if ([string]::IsNullOrWhiteSpace($requiredLabviewYear) -or $requiredLabviewYear -notmatch '^\d{4}$') {
+            $requiredLabviewYear = '2025'
+          }
+
+          $preBuildVipFiles = @(
+            Get-ChildItem -Path $cloneRoot -Recurse -Filter '*.vip' -File -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName
+          )
+
+          $vipCmd = @('--color-mode', 'never', '--labview-version', $requiredLabviewYear, '--labview-bitness', '64', 'build', $vipbPath)
+          Write-PreflightLog ("Executing Windows host VIP build command: {0} {1}" -f $vipmExe, ($vipCmd -join ' '))
+          & $vipmExe @vipCmd | Tee-Object -FilePath $vipLogPath -Append | Out-Null
+          $vipExit = [int]$LASTEXITCODE
+          if ($vipExit -ne 0) {
+            Write-VipReport -Status 'fail' -Reason 'vipm_cli_command_failed' -X86Ppl $x86Ppl -X64Ppl $x64Ppl -LinuxX64Ppl $linuxX64Ppl -VipbPath $vipbPath -ReleaseNotesPath $releaseNotesPath -VipmExitCode $vipExit
+            throw "vipm build failed with exit code $vipExit."
+          }
+
+          $postBuildVipFiles = @(
+            Get-ChildItem -Path $cloneRoot -Recurse -Filter '*.vip' -File -ErrorAction SilentlyContinue
+          )
+          $newVipFiles = @(
+            $postBuildVipFiles |
+              Where-Object { $_.FullName -notin $preBuildVipFiles } |
+              Sort-Object LastWriteTimeUtc -Descending
+          )
+
+          $builtVipSource = @(
+            $newVipFiles | Select-Object -First 1 -ExpandProperty FullName
+          ) | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($builtVipSource)) {
+            $builtVipSource = @(
+              $postBuildVipFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1 -ExpandProperty FullName
+            ) | Select-Object -First 1
+          }
+          if ([string]::IsNullOrWhiteSpace($builtVipSource)) {
+            Write-VipReport -Status 'fail' -Reason 'vip_output_missing' -X86Ppl $x86Ppl -X64Ppl $x64Ppl -LinuxX64Ppl $linuxX64Ppl -VipbPath $vipbPath -ReleaseNotesPath $releaseNotesPath -VipmExitCode $vipExit
+            throw 'vip_output_missing'
+          }
+
+          $builtVip = Join-Path $outputRoot ([System.IO.Path]::GetFileName($builtVipSource))
+          Copy-Item -LiteralPath $builtVipSource -Destination $builtVip -Force
+
+          Write-VipReport -Status 'pass' -Reason 'none' -X86Ppl $x86Ppl -X64Ppl $x64Ppl -LinuxX64Ppl $linuxX64Ppl -VipbPath $vipbPath -ReleaseNotesPath $releaseNotesPath -VipOutput $builtVip -VipmExitCode $vipExit
+
+      - name: Upload windows host VIP artifacts (attempt 1)
+        if: always()
+        id: upload_windows_host_vip_artifacts_attempt_1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-labview-image-gate-vip-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/parity/windows-vip
+          if-no-files-found: warn
+
+      - name: Upload windows host VIP artifacts (attempt 2)
+        if: always() && steps.upload_windows_host_vip_artifacts_attempt_1.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-labview-image-gate-vip-${{ github.run_id }}
+          path: ${{ github.workspace }}/artifacts/linux-image-gate/parity/windows-vip
+          if-no-files-found: warn
+
+  gate-summary:
+    name: Linux Gate Summary
+    if: always()
+    needs: [windows-host-ppl-32, windows-host-ppl-64, linux-parity-projectspec-via-container, linux-hosted-ppl-64, windows-host-vip-build]
+    runs-on: ubuntu-latest
+    outputs:
+      gate_status: ${{ steps.evaluate.outputs.gate_status }}
+      gate_report_artifact_name: ${{ steps.evaluate.outputs.gate_report_artifact_name }}
+      gate_report_path: ${{ steps.evaluate.outputs.gate_report_path }}
+    steps:
+      - id: evaluate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ppl32_result='${{ needs.windows-host-ppl-32.result }}'
+          ppl64_result='${{ needs.windows-host-ppl-64.result }}'
+          projectspec_result='${{ needs.linux-parity-projectspec-via-container.result }}'
+          linux_hosted_ppl_result='${{ needs.linux-hosted-ppl-64.result }}'
+          vip_result='${{ needs.windows-host-vip-build.result }}'
+
+          gate_status='fail'
+          if [[ "$ppl32_result" == 'success' && "$ppl64_result" == 'success' && "$projectspec_result" == 'success' && "$vip_result" == 'success' ]]; then
+            gate_status='pass'
+          fi
+
+          echo "gate_status=$gate_status" >> "$GITHUB_OUTPUT"
+          echo "gate_report_artifact_name=linux-labview-image-gate-projectspec-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "gate_report_path=${GITHUB_WORKSPACE}/artifacts/linux-image-gate/parity/linux-projectspec/linux-parity-projectspec-classification.json" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Linux Gate Summary"
+            echo ""
+            echo "- Windows host PPL 32 prerequisite: $ppl32_result"
+            echo "- Windows host PPL 64 prerequisite: $ppl64_result"
+            echo "- Linux parity project-spec lane: $projectspec_result"
+            echo "- Linux hosted PPL x64 lane (signal-only): $linux_hosted_ppl_result"
+            echo "- Windows host VIP lane (blocking): $vip_result"
+            echo "- Overall status: $gate_status"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$linux_hosted_ppl_result" != 'success' ]]; then
+            echo "::warning::Linux hosted PPL x64 signal lane failed. Windows VIP signal lane may not receive lv_icon_linux_x64.lvlibp."
+          fi
+
+          if [[ "$vip_result" != 'success' ]]; then
+            echo "::error::Windows host VIP lane failed. This is blocking for Linux gate."
+          fi
+
+          if [[ "$gate_status" != 'pass' ]]; then
+            echo "One or more hard Linux gate lanes failed (windows host prerequisites, linux projectspec lane, and/or windows host VIP lane)." >&2
+            exit 1
+          fi

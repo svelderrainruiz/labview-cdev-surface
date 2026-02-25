@@ -2,6 +2,14 @@
 
 Canonical governance surface for deterministic `C:\dev` workspace provisioning.
 
+Build and gate lanes run with an always-isolated workspace policy:
+- `git-worktree` primary provisioning
+- detached-clone fallback
+- deterministic root selection (`D:\dev` preferred, `C:\dev` fallback)
+- git trust bootstrap via `scripts\Ensure-GitSafeDirectories.ps1` (including worktrees)
+- cleanup runs under `if: always()` after artifact upload
+- published installer defaults remain unchanged (`ci-only-selector`)
+
 This repository owns:
 - `workspace-governance.json` (machine-readable remote/branch/commit contract)
 - `workspace-governance-payload\workspace-governance\*` (canonical payload copied into `C:\dev` by installer runtime)

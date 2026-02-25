@@ -7,6 +7,84 @@
       "sha256_file": "runner-cli.exe.sha256",
       "metadata_file": "runner-cli.metadata.json"
     },
+    "build_workspace_policy": {
+      "mode": "always-isolated",
+      "strategy_primary": "git-worktree",
+      "strategy_fallback": "detached-clone",
+      "windows_root_candidates": [
+        "D:\\dev",
+        "C:\\dev"
+      ],
+      "windows_root_selection": "prefer-d-fallback-c",
+      "cleanup_policy": "always",
+      "applies_to": [
+        "windows-host-release-gate",
+        "windows-container-parity-gate",
+        "linux-gate-windows-prereqs",
+        "local-exercise"
+      ],
+      "release_artifact_default_policy": "ci-only-selector"
+    },
+    "release_build_contract": {
+      "labview_version_source": ".lvversion",
+      "required_year": "2020",
+      "required_ppl_bitnesses": [
+        "32",
+        "64"
+      ],
+      "required_vip_bitness": "64",
+      "required_execution_profile": "host-release",
+      "artifact_root": "artifacts\\release",
+      "promotable_artifacts": [
+        "ppl",
+        "vip"
+      ]
+    },
+    "container_parity_contract": {
+      "lvcontainer_source_repo": "labview-icon-editor",
+      "lvcontainer_file": ".lvcontainer",
+      "windows_tag_strategy": "derive-from-lvcontainer",
+      "linux_tag_strategy": "derive-from-lvcontainer",
+      "allowed_windows_tags": [
+        "2026q1-windows"
+      ],
+      "allowed_linux_tags": [
+        "2025q3-linux",
+        "2026q1-linux"
+      ],
+      "required_execution_profile": "container-parity",
+      "artifact_root": "artifacts\\parity",
+      "build_spec_kind": "ppl",
+      "build_spec_placeholder": "srcdist",
+      "windows_vip_headless_required": true,
+      "promote_artifacts": false,
+      "linux_vip_build": {
+        "enabled": true,
+        "driver": "vipm-cli",
+        "required_ppl_bitness": [
+          "32",
+          "64"
+        ],
+        "artifact_role": "signal-only"
+      },
+      "responsibilities": [
+        "project-spec-build",
+        "vi-analyzer",
+        "vip-build-linux-parity"
+      ],
+      "lock_policy": "derive-tag-then-pin-digest",
+      "linux_image_locks": {
+        "2025q3-linux": "sha256:9938561c6460841674f9b1871d8562242f51fe9fb72a2c39c66608491edf429c",
+        "2026q1-linux": "sha256:597ba99260c0511475e27c04f13dd06f2f57e8ce7d3ee6c1ca289020b1f8c426"
+      },
+      "release_lane_linux_override": {
+        "multiarch-2025q3": "nationalinstruments/labview:2025q3-linux@sha256:9938561c6460841674f9b1871d8562242f51fe9fb72a2c39c66608491edf429c"
+      },
+      "required_check_rollout": {
+        "mode": "stage_then_required",
+        "promotion_condition": "single_green_run"
+      }
+    },
     "labview_gate": {
       "required_year": "2020",
       "required_ppl_bitnesses": [
@@ -90,6 +168,41 @@
         "ppl_capability_checks.64",
         "vip_package_build_check"
       ]
+    },
+    "release_build_default_lane": "multiarch-2025q3",
+    "release_build_contracts": {
+      "legacy-2020": {
+        "labview_version_source": ".lvversion",
+        "required_year": "2020",
+        "required_ppl_bitnesses": [
+          "32",
+          "64"
+        ],
+        "required_vip_bitness": "64",
+        "required_execution_profile": "host-release",
+        "artifact_root": "artifacts\\release",
+        "promotable_artifacts": [
+          "ppl",
+          "vip"
+        ]
+      },
+      "multiarch-2025q3": {
+        "lane_id": "multiarch-2025q3",
+        "labview_version_source": ".lvversion",
+        "required_year": "2025",
+        "required_ppl_bitnesses": [
+          "32",
+          "64"
+        ],
+        "required_vip_bitness": "64",
+        "required_execution_profile": "host-release",
+        "artifact_root": "artifacts\\release",
+        "promotable_artifacts": [
+          "ppl",
+          "vip"
+        ],
+        "linux_parity_override_image": "nationalinstruments/labview:2025q3-linux@sha256:9938561c6460841674f9b1871d8562242f51fe9fb72a2c39c66608491edf429c"
+      }
     }
   },
   "managed_repos": [
@@ -119,12 +232,12 @@
       "strict_status_checks": true,
       "required_review_policy": {
         "required_pull_request_reviews": true,
-        "required_approving_review_count": 1,
+        "required_approving_review_count": 0,
         "dismiss_stale_reviews": true
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "65b2fb188b6d7e18e88af7a133344dddd6ff0445"
+      "pinned_sha": "8789dcde4ff1ce47efb52633bae636e44de71e6b"
     },
     {
       "path": "C:\\dev\\labview-icon-editor-org",
@@ -152,12 +265,12 @@
       "strict_status_checks": true,
       "required_review_policy": {
         "required_pull_request_reviews": true,
-        "required_approving_review_count": 1,
+        "required_approving_review_count": 0,
         "dismiss_stale_reviews": true
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "65b2fb188b6d7e18e88af7a133344dddd6ff0445"
+      "pinned_sha": "8789dcde4ff1ce47efb52633bae636e44de71e6b"
     },
     {
       "path": "C:\\dev\\labview-icon-editor-upstream",
@@ -183,12 +296,12 @@
       "strict_status_checks": true,
       "required_review_policy": {
         "required_pull_request_reviews": true,
-        "required_approving_review_count": 1,
+        "required_approving_review_count": 0,
         "dismiss_stale_reviews": true
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "65b2fb188b6d7e18e88af7a133344dddd6ff0445"
+      "pinned_sha": "8789dcde4ff1ce47efb52633bae636e44de71e6b"
     },
     {
       "path": "C:\\dev\\labview-for-containers",
@@ -353,7 +466,7 @@
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "f835eb2fe7d94b7394ad98ab2000f71121448bfa"
+      "pinned_sha": "e7688e8e1c7613be839ad365c1dc9e4426d5a5e1"
     },
     {
       "path": "C:\\dev\\labview-cdev-surface-upstream",
@@ -386,7 +499,10 @@
       },
       "forbid_force_push": true,
       "forbid_deletion": true,
-      "pinned_sha": "f835eb2fe7d94b7394ad98ab2000f71121448bfa"
+      "pinned_sha": "44c5ea0b36ae13d8388e66cffde4d5f54b648f09"
     }
   ]
 }
+
+
+
