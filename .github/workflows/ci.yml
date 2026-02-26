@@ -25,18 +25,29 @@ jobs:
       - id: topology_scope
         name: Resolve topology readiness scope
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $requireNotBehind = $false
-          $pinManifestPaths = @(
-            'workspace-governance.json',
-            'workspace-governance-payload/workspace-governance/workspace-governance.json'
-          )
 
           if ('${{ github.event_name }}' -eq 'pull_request') {
-            git fetch origin "${{ github.base_ref }}" --depth=1
-            $diff = git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" -- $pinManifestPaths
-            if ($diff -match '(?m)^[\+\-].*"pinned_sha"\s*:') {
+            $repoSlug = '${{ github.repository }}'
+            $prNumber = '${{ github.event.pull_request.number }}'
+            $pinPatch = & gh api "repos/$repoSlug/pulls/$prNumber/files" `
+              --paginate `
+              --jq '.[] | select(.filename=="workspace-governance.json" or .filename=="workspace-governance-payload/workspace-governance/workspace-governance.json") | (.patch // "")'
+            if ($LASTEXITCODE -ne 0) {
+              throw 'topology_scope_pr_files_query_failed'
+            }
+
+            $patchText = if ($pinPatch -is [System.Array]) {
+              ($pinPatch | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+            } else {
+              [string]$pinPatch
+            }
+
+            if ($patchText -match '(?m)^[\+\-].*"pinned_sha"\s*:') {
               $requireNotBehind = $true
             }
           }
@@ -75,7 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: topology-readiness-${{ github.run_id }}
-          path: ${{ steps.topology_readiness.outputs.report_path }}
+          path: ${{ runner.temp }}/topology-readiness-report.json
           if-no-files-found: warn
       - name: Install Pester
         shell: pwsh
@@ -381,4 +392,5 @@ jobs:
           artifact_name: provenance-contract-${{ github.run_id }}
           artifact_path: ${{ runner.temp }}/provenance
           if_no_files_found: error
+
 
