@@ -1,0 +1,121 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "opsRepo",
+      "type": "promptString",
+      "description": "GitHub repository slug",
+      "default": "svelderrainruiz/labview-cdev-surface"
+    },
+    {
+      "id": "opsWorkflow",
+      "type": "promptString",
+      "description": "Workflow file",
+      "default": "self-hosted-machine-certification.yml"
+    },
+    {
+      "id": "opsBranch",
+      "type": "promptString",
+      "description": "Branch",
+      "default": "main"
+    },
+    {
+      "id": "opsRunId",
+      "type": "promptString",
+      "description": "Run ID (optional for watch)"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "ops: dispatch at remote head (portable)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "scripts/Invoke-PortableOps.ps1",
+        "-ScriptPath",
+        "scripts/Dispatch-WorkflowAtRemoteHead.ps1",
+        "-ScriptArguments",
+        "-Repository",
+        "${input:opsRepo}",
+        "-WorkflowFile",
+        "${input:opsWorkflow}",
+        "-Branch",
+        "${input:opsBranch}",
+        "-CancelStale",
+        "-OutputPath",
+        "artifacts/dispatch/dispatch-report.json"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "ops: cancel stale runs (portable)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "scripts/Invoke-PortableOps.ps1",
+        "-ScriptPath",
+        "scripts/Cancel-StaleWorkflowRuns.ps1",
+        "-ScriptArguments",
+        "-Repository",
+        "${input:opsRepo}",
+        "-WorkflowFile",
+        "${input:opsWorkflow}",
+        "-Branch",
+        "${input:opsBranch}",
+        "-OutputPath",
+        "artifacts/dispatch/cancel-report.json"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "ops: watch run (portable)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "scripts/Invoke-PortableOps.ps1",
+        "-ScriptPath",
+        "scripts/Watch-WorkflowRun.ps1",
+        "-ScriptArguments",
+        "-Repository",
+        "${input:opsRepo}",
+        "-RunId",
+        "${input:opsRunId}",
+        "-WorkflowFile",
+        "${input:opsWorkflow}",
+        "-Branch",
+        "${input:opsBranch}",
+        "-OutputPath",
+        "artifacts/dispatch/watch-report.json"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "ops: runner queue snapshot (portable)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "scripts/Invoke-PortableOps.ps1",
+        "-ScriptPath",
+        "scripts/Get-RunnerQueueSnapshot.ps1",
+        "-ScriptArguments",
+        "-Repository",
+        "${input:opsRepo}",
+        "-WorkflowFile",
+        "${input:opsWorkflow}",
+        "-Branch",
+        "${input:opsBranch}",
+        "-OutputPath",
+        "artifacts/dispatch/queue-snapshot.json"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
