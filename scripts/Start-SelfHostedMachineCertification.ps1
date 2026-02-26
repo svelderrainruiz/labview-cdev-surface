@@ -181,6 +181,29 @@ function Get-SetupBoolean {
     }
 }
 
+function Get-SetupExecutionBitness {
+    param(
+        [Parameter(Mandatory = $true)][object]$Setup,
+        [Parameter()][string]$Default = 'auto'
+    )
+
+    $property = $Setup.PSObject.Properties['execution_bitness']
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return $Default
+    }
+
+    $raw = ([string]$property.Value).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $Default
+    }
+
+    if ($raw -notin @('auto', '32', '64')) {
+        throw ("setup_execution_bitness_invalid: setup '{0}' has invalid execution_bitness '{1}'. Allowed values: auto, 32, 64." -f [string]$Setup.name, [string]$property.Value)
+    }
+
+    return $raw
+}
+
 function Get-SetupAllowedMachineNames {
     param([Parameter(Mandatory = $true)][object]$Setup)
 
@@ -373,6 +396,8 @@ foreach ($setup in $selectedSetups) {
     $runnerLabelsCsv = Resolve-UpstreamRunnerLabelsCsv -Repository $Repository -Setup $setup -ActorMachine $resolvedActorMachineName
     $switchDockerContext = (Get-SetupBoolean -Setup $setup -PropertyName 'switch_docker_context' -Default $true).ToString().ToLowerInvariant()
     $startDockerDesktop = (Get-SetupBoolean -Setup $setup -PropertyName 'start_docker_desktop_if_needed' -Default $true).ToString().ToLowerInvariant()
+    $executionBitness = Get-SetupExecutionBitness -Setup $setup -Default 'auto'
+    $requireSecondary32 = (Get-SetupBoolean -Setup $setup -PropertyName 'require_secondary_32' -Default $false).ToString().ToLowerInvariant()
     Assert-UpstreamRunnerCapacity `
         -Repository $Repository `
         -RunnerLabelsCsv $runnerLabelsCsv `
@@ -389,6 +414,8 @@ foreach ($setup in $selectedSetups) {
         '-f', ("runner_labels_csv={0}" -f $runnerLabelsCsv),
         '-f', ("expected_labview_year={0}" -f ([string]$setup.expected_labview_year)),
         '-f', ("docker_context={0}" -f ([string]$setup.docker_context)),
+        '-f', ("execution_bitness={0}" -f $executionBitness),
+        '-f', ("require_secondary_32={0}" -f $requireSecondary32),
         '-f', ("switch_docker_context={0}" -f $switchDockerContext),
         '-f', ("start_docker_desktop_if_needed={0}" -f $startDockerDesktop),
         '-f', ("allowed_machine_names_csv={0}" -f $allowedMachineNamesCsv),
@@ -445,6 +472,8 @@ foreach ($setup in $selectedSetups) {
         actor_key_strategy = $ActorKeyStrategy
         runner_labels_csv = $runnerLabelsCsv
         allowed_machine_names_csv = $allowedMachineNamesCsv
+        execution_bitness = $executionBitness
+        require_secondary_32 = $requireSecondary32
         start_docker_desktop_if_needed = $startDockerDesktop
         switch_docker_context = $switchDockerContext
         run_id = if ($null -ne $run) { (Get-ScalarString -Value $run.databaseId) } else { '' }
