@@ -30,4 +30,12 @@ Describe 'Start self-hosted machine certification dispatch contract' {
         $script:startScriptContent | Should -Match 'execution_bitness = \$executionBitness'
         $script:startScriptContent | Should -Match 'require_secondary_32 = \$requireSecondary32'
     }
+    It 'auto-attaches missing upstream actor labels when base routing matches' {
+        $script:startScriptContent | Should -Match 'function Get-RunnerInventory'
+        $script:startScriptContent | Should -Match 'requiredActorLabels = @\(\$requiredLabels \| Where-Object \{ \$_ -like ''cert-actor-\*'' \}'
+        $script:startScriptContent | Should -Match 'runner_actor_label_autofix'
+        $script:startScriptContent | Should -Match 'actions/runners/\{0\}/labels'
+        $script:startScriptContent | Should -Match 'labels\[\]='
+    }
 }
+

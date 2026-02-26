@@ -79,4 +79,11 @@ Describe 'Machine certification setup profile contract' {
             [bool]$setup.require_secondary_32 | Should -Be $false
         }
     }
+    It 'includes 2025 and 2026 host setup entries for actor-routed dispatch' {
+        $names = @($script:activeSetups | ForEach-Object { [string]$_.name })
+        $names | Should -Contain 'host-2025-desktop-windows'
+        $names | Should -Contain 'host-2026-desktop-linux'
+        $names | Should -Contain 'host-2026-desktop-windows'
+    }
 }
+
