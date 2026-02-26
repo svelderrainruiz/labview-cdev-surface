@@ -22,6 +22,72 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - id: topology_scope
+        name: Resolve topology readiness scope
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $requireNotBehind = $false
+
+          if ('${{ github.event_name }}' -eq 'pull_request') {
+            $repoSlug = '${{ github.repository }}'
+            $prNumber = '${{ github.event.pull_request.number }}'
+            $pinPatch = & gh api "repos/$repoSlug/pulls/$prNumber/files" `
+              --paginate `
+              --jq '.[] | select(.filename=="workspace-governance.json" or .filename=="workspace-governance-payload/workspace-governance/workspace-governance.json") | (.patch // "")'
+            if ($LASTEXITCODE -ne 0) {
+              throw 'topology_scope_pr_files_query_failed'
+            }
+
+            $patchText = if ($pinPatch -is [System.Array]) {
+              ($pinPatch | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+            } else {
+              [string]$pinPatch
+            }
+
+            if ($patchText -match '(?m)^[\+\-].*"pinned_sha"\s*:') {
+              $requireNotBehind = $true
+            }
+          }
+
+          "require_not_behind=$([string]$requireNotBehind)".ToLowerInvariant() | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - id: topology_readiness
+        name: Assert topology readiness (fail-closed for pin PRs)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportPath = Join-Path $env:RUNNER_TEMP 'topology-readiness-report.json'
+          "report_path=$reportPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          $args = @(
+            '-NoProfile',
+            '-File', './scripts/Assert-TopologyReadiness.ps1',
+            '-ForkRepository', 'svelderrainruiz/labview-cdev-surface',
+            '-UpstreamRepository', 'LabVIEW-Community-CI-CD/labview-cdev-surface',
+            '-Branch', 'main',
+            '-OutputPath', $reportPath
+          )
+          if ('${{ steps.topology_scope.outputs.require_not_behind }}' -eq 'true') {
+            $args += '-RequireNotBehind'
+          }
+
+          & pwsh @args
+          if ($LASTEXITCODE -ne 0) {
+            throw "topology_readiness_failed: Assert-TopologyReadiness.ps1 exited with code $LASTEXITCODE."
+          }
+
+      - name: Upload topology readiness report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: topology-readiness-${{ github.run_id }}
+          path: ${{ runner.temp }}/topology-readiness-report.json
+          if-no-files-found: warn
       - name: Install Pester
         shell: pwsh
         run: |
@@ -56,6 +122,8 @@ jobs:
             './tests/MachineCertificationProfilesContract.Tests.ps1',
             './tests/StartSelfHostedMachineCertificationContract.Tests.ps1',
             './tests/DispatchWorkflowAtRemoteHeadContract.Tests.ps1',
+            './tests/TopologyReadinessScriptContract.Tests.ps1',
+            './tests/SyncForkMainWithUpstreamWorkflowContract.Tests.ps1',
             './tests/CancelStaleWorkflowRunsContract.Tests.ps1',
             './tests/WatchWorkflowRunContract.Tests.ps1',
             './tests/PortableOpsRuntimeContract.Tests.ps1',
@@ -324,6 +392,5 @@ jobs:
           artifact_name: provenance-contract-${{ github.run_id }}
           artifact_path: ${{ runner.temp }}/provenance
           if_no_files_found: error
-
 
 

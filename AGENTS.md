@@ -35,6 +35,8 @@ Build and gate lanes must run in isolated workspaces on every run (`D:\dev` pref
 - On drift, automation must update manifest pins, create/update branch `automation/sha-refresh`, and open or update a PR to `main`.
 - `workspace-sha-drift-signal.yml` uses `WORKFLOW_BOT_TOKEN` for cross-repo default-branch SHA reads.
 - `workspace-sha-refresh-pr.yml` requires repository secret `WORKFLOW_BOT_TOKEN` for branch mutation and PR operations.
+- `CI Pipeline` enforces topology readiness for pin-change PRs through `scripts/Assert-TopologyReadiness.ps1` (fail-closed when fork `main` is behind upstream `main`).
+- `.github/workflows/sync-fork-main-with-upstream.yml` provides scheduled no-force fork-main sync PR generation.
 - Refresh CI propagation is PR-event-driven; do not explicitly dispatch `ci.yml` from refresh automation.
 - If `WORKFLOW_BOT_TOKEN` is missing or misconfigured, refresh automation must fail fast with explicit remediation.
 - Auto-merge is enabled by default for refresh PRs using squash strategy.

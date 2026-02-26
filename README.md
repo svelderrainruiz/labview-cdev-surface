@@ -40,6 +40,9 @@ The NSIS payload bundles pinned CLI assets for both `win-x64` and `linux-x64` an
 
 `Workspace SHA Refresh PR` is the default remediation workflow. It updates `pinned_sha` values, reuses branch `automation/sha-refresh`, and creates or updates a single refresh PR to `main`.
 
+Topology readiness policy: pin-change PRs fail closed when `fork/main` is behind `upstream/main` (enforced by `scripts/Assert-TopologyReadiness.ps1` in `CI Pipeline`).
+No-force sync policy: `.github/workflows/sync-fork-main-with-upstream.yml` opens a fork PR that merges `upstream/main` into fork `main` before pinning lanes proceed.
+
 Auto-refresh policy:
 1. Auto-merge is enabled by default for refresh PRs with squash strategy.
 2. Maintainer approval is not required for `labview-cdev-surface` refresh merges (`required_approving_review_count = 0`).
