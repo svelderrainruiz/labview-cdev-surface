@@ -20,6 +20,15 @@ Describe 'CI workflow reliability contract' {
         $script:workflowContent | Should -Match 'cancel-in-progress:\s*true'
     }
 
+    It 'fails closed on pin-change PRs when fork topology is behind upstream' {
+        $script:workflowContent | Should -Match 'id:\s*topology_scope'
+        $script:workflowContent | Should -Match 'id:\s*topology_readiness'
+        $script:workflowContent | Should -Match 'Assert-TopologyReadiness\.ps1'
+        $script:workflowContent | Should -Match 'steps\.topology_scope\.outputs\.require_not_behind'
+        $script:workflowContent | Should -Match 'topology_readiness_failed'
+        $script:workflowContent | Should -Match 'topology-readiness-\$\{\{\s*github\.run_id\s*\}\}'
+    }
+
     It 'uses reusable upload-artifact retry composite for workspace installer artifacts' {
         $script:workflowContent | Should -Match 'id:\s*upload-workspace-installer-artifact'
         $script:workflowContent | Should -Match 'uses:\s*\./\.github/actions/upload-artifact-retry'

@@ -1,0 +1,123 @@
+name: Sync Fork Main With Upstream
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-fork-main-with-upstream:
+    name: Sync Fork Main With Upstream
+    if: ${{ github.repository == 'svelderrainruiz/labview-cdev-surface' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sync-fork-main-with-upstream
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git author
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - id: topology
+        name: Compare fork main against upstream main
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $compare = & gh api repos/LabVIEW-Community-CI-CD/labview-cdev-surface/compare/main...svelderrainruiz:main | ConvertFrom-Json -ErrorAction Stop
+          $behindBy = [int]$compare.behind_by
+          $aheadBy = [int]$compare.ahead_by
+          $upstreamHead = [string]$compare.base_commit.sha
+          $forkHead = [string]$compare.merge_base_commit.sha
+          if ($null -ne $compare.PSObject.Properties['commits'] -and @($compare.commits).Count -gt 0) {
+            $forkHead = [string]@($compare.commits)[-1].sha
+          }
+
+          $syncBranch = "sync/fork-main-with-upstream-$($upstreamHead.Substring(0,7))"
+          "behind_by=$behindBy" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "ahead_by=$aheadBy" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "upstream_head=$upstreamHead" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "fork_head=$forkHead" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sync_branch=$syncBranch" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - id: existing_pr
+        if: steps.topology.outputs.behind_by != '0'
+        name: Detect existing sync PR
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = "svelderrainruiz:${{ steps.topology.outputs.sync_branch }}"
+          $prNumber = (& gh pr list -R svelderrainruiz/labview-cdev-surface --state open --head $head --base main --json number --jq '.[0].number').Trim()
+          if ([string]::IsNullOrWhiteSpace($prNumber)) {
+            $prNumber = ''
+          }
+          "number=$prNumber" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Create no-force sync branch
+        if: steps.topology.outputs.behind_by != '0' && steps.existing_pr.outputs.number == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/LabVIEW-Community-CI-CD/labview-cdev-surface.git
+          git fetch upstream main --no-tags
+          git fetch origin main --no-tags
+          git checkout -B "${{ steps.topology.outputs.sync_branch }}" origin/main
+          git merge --no-ff --no-edit upstream/main
+          git push --set-upstream origin "${{ steps.topology.outputs.sync_branch }}"
+
+      - name: Open sync PR
+        if: steps.topology.outputs.behind_by != '0' && steps.existing_pr.outputs.number == ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $body = @"
+          Automated no-force synchronization of fork `main` with `upstream/main`.
+
+          - behind_by (pre-merge): `${{ steps.topology.outputs.behind_by }}`
+          - ahead_by (pre-merge): `${{ steps.topology.outputs.ahead_by }}`
+          - upstream head: `${{ steps.topology.outputs.upstream_head }}`
+          - run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          "@
+
+          & gh pr create `
+            -R svelderrainruiz/labview-cdev-surface `
+            --base main `
+            --head "${{ steps.topology.outputs.sync_branch }}" `
+            --title "chore(sync): align fork main with upstream main" `
+            --body $body
+          if ($LASTEXITCODE -ne 0) {
+            throw 'sync_pr_create_failed'
+          }
+
+      - name: Summarize
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $summary = @(
+            "## Sync Fork Main With Upstream",
+            "",
+            "- behind_by: `${{ steps.topology.outputs.behind_by }}`",
+            "- ahead_by: `${{ steps.topology.outputs.ahead_by }}`",
+            "- upstream_head: `${{ steps.topology.outputs.upstream_head }}`",
+            "- sync_branch: `${{ steps.topology.outputs.sync_branch }}`",
+            "- existing_pr: `${{ steps.existing_pr.outputs.number }}`"
+          ) -join [Environment]::NewLine
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
