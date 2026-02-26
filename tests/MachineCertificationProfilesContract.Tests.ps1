@@ -61,4 +61,22 @@ Describe 'Machine certification setup profile contract' {
             [bool]$property.Value | Should -Be $true
         }
     }
+
+    It 'requires explicit execution bitness policy on active setups' {
+        foreach ($setup in $script:activeSetups) {
+            $property = $setup.PSObject.Properties['execution_bitness']
+            $property | Should -Not -BeNullOrEmpty
+            [string]$property.Value | Should -BeIn @('auto', '32', '64')
+        }
+    }
+
+    It 'requires secondary 32-bit policy only on legacy-2020-desktop-windows' {
+        $legacyWindows = @($script:activeSetups | Where-Object { [string]$_.name -eq 'legacy-2020-desktop-windows' }) | Select-Object -First 1
+        $legacyWindows | Should -Not -BeNullOrEmpty
+        [bool]$legacyWindows.require_secondary_32 | Should -Be $true
+
+        foreach ($setup in @($script:activeSetups | Where-Object { [string]$_.name -ne 'legacy-2020-desktop-windows' })) {
+            [bool]$setup.require_secondary_32 | Should -Be $false
+        }
+    }
 }

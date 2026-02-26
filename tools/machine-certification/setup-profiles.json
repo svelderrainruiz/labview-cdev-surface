@@ -5,7 +5,10 @@
       "name": "legacy-2020-desktop-linux",
       "description": "Windows self-hosted runner with LabVIEW 2020 x86/x64 and Docker desktop-linux context.",
       "setup_route_label": "cert-setup-legacy-2020-desktop-linux",
-      "allowed_machine_names": ["GHOST", "DESKTOP-6Q81H4O"],
+      "allowed_machine_names": [
+        "GHOST",
+        "DESKTOP-6Q81H4O"
+      ],
       "runner_labels_csv": "self-hosted,windows,self-hosted-windows-lv,headless",
       "collision_guard_label": "linux-gate-windows-ready",
       "runner_labels_json": "[\"self-hosted\",\"windows\",\"self-hosted-windows-lv\",\"headless\"]",
@@ -15,13 +18,17 @@
       "switch_docker_context": true,
       "skip_host_ini_mutation": true,
       "skip_override_phase": false,
-      "active": true
+      "active": true,
+      "execution_bitness": "64",
+      "require_secondary_32": false
     },
     {
       "name": "legacy-2020-desktop-windows",
       "description": "Windows self-hosted runner with LabVIEW 2020 x86/x64 and Docker desktop-windows context visibility.",
       "setup_route_label": "cert-setup-legacy-2020-desktop-windows",
-      "allowed_machine_names": ["GHOST"],
+      "allowed_machine_names": [
+        "GHOST"
+      ],
       "runner_labels_csv": "self-hosted,windows,self-hosted-windows-lv,headless",
       "collision_guard_label": "cdev-surface-windows-gate",
       "runner_labels_json": "[\"self-hosted\",\"windows\",\"self-hosted-windows-lv\",\"headless\"]",
@@ -31,13 +38,18 @@
       "switch_docker_context": true,
       "skip_host_ini_mutation": true,
       "skip_override_phase": false,
-      "active": true
+      "active": true,
+      "execution_bitness": "64",
+      "require_secondary_32": true
     },
     {
       "name": "host-2026-desktop-linux",
       "description": "Windows self-hosted runner with LabVIEW 2026 x86/x64 host path checks and Docker desktop-linux context.",
       "setup_route_label": "cert-setup-host-2026-desktop-linux",
-      "allowed_machine_names": ["GHOST", "DESKTOP-6Q81H4O"],
+      "allowed_machine_names": [
+        "GHOST",
+        "DESKTOP-6Q81H4O"
+      ],
       "runner_labels_csv": "self-hosted,windows,self-hosted-windows-lv,headless",
       "collision_guard_label": "linux-gate-windows-ready",
       "runner_labels_json": "[\"self-hosted\",\"windows\",\"self-hosted-windows-lv\",\"headless\"]",
@@ -47,13 +59,17 @@
       "switch_docker_context": true,
       "skip_host_ini_mutation": true,
       "skip_override_phase": false,
-      "active": true
+      "active": true,
+      "execution_bitness": "64",
+      "require_secondary_32": false
     },
     {
       "name": "host-2026-desktop-windows",
       "description": "Windows self-hosted runner with LabVIEW 2026 x86/x64 host path checks and Docker desktop-windows context.",
       "setup_route_label": "cert-setup-host-2026-desktop-windows",
-      "allowed_machine_names": ["GHOST"],
+      "allowed_machine_names": [
+        "GHOST"
+      ],
       "runner_labels_csv": "self-hosted,windows,self-hosted-windows-lv,headless",
       "collision_guard_label": "cdev-surface-windows-gate",
       "runner_labels_json": "[\"self-hosted\",\"windows\",\"self-hosted-windows-lv\",\"headless\"]",
@@ -63,7 +79,9 @@
       "switch_docker_context": true,
       "skip_host_ini_mutation": true,
       "skip_override_phase": false,
-      "active": true
+      "active": true,
+      "execution_bitness": "64",
+      "require_secondary_32": false
     }
   ]
 }
