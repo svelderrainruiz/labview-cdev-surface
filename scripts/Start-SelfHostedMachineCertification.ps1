@@ -291,6 +291,65 @@ function Resolve-UpstreamRunnerLabelsCsv {
     return (Join-LabelsCsv -Labels $labels)
 }
 
+function Get-RunnerInventory {
+    param([Parameter(Mandatory = $true)][string]$Repository)
+
+    $runnerLines = & gh api "repos/$Repository/actions/runners" --paginate --jq '.runners[] | @json'
+    if ($LASTEXITCODE -ne 0) {
+        throw "runner_inventory_query_failed: unable to query runner inventory for '$Repository'."
+    }
+
+    $runners = @()
+    foreach ($line in @($runnerLines)) {
+        if ([string]::IsNullOrWhiteSpace([string]$line)) { continue }
+        $runners += @(([string]$line | ConvertFrom-Json -ErrorAction Stop))
+    }
+
+    return @($runners)
+}
+
+function Test-RunnerAllowedMachine {
+    param(
+        [Parameter(Mandatory = $true)][object]$Runner,
+        [Parameter()][string[]]$AllowedMachineNames = @()
+    )
+
+    if (@($AllowedMachineNames).Count -eq 0) {
+        return $true
+    }
+
+    $runnerName = [string]$Runner.name
+    foreach ($allowedMachine in $AllowedMachineNames) {
+        if ($runnerName.Equals($allowedMachine, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+        if ($runnerName.StartsWith(($allowedMachine + '-'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-EligibleOnlineRunners {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Runners,
+        [Parameter(Mandatory = $true)][string[]]$RequiredLabels,
+        [Parameter()][string[]]$AllowedMachineNames = @()
+    )
+
+    return @(
+        $Runners | Where-Object {
+            [string]$_.status -eq 'online'
+        } | Where-Object {
+            $runnerLabels = @($_.labels | ForEach-Object { [string]$_.name })
+            @($RequiredLabels | Where-Object { $runnerLabels -notcontains $_ }).Count -eq 0
+        } | Where-Object {
+            Test-RunnerAllowedMachine -Runner $_ -AllowedMachineNames $AllowedMachineNames
+        }
+    )
+}
+
 function Assert-UpstreamRunnerCapacity {
     param(
         [Parameter(Mandatory = $true)][string]$Repository,
@@ -308,44 +367,55 @@ function Assert-UpstreamRunnerCapacity {
     if (-not [string]::IsNullOrWhiteSpace($AllowedMachineNamesCsv)) {
         $allowedMachineNames = @(
             $AllowedMachineNamesCsv -split ',' |
-            ForEach-Object { ([string]$_).Trim().ToUpperInvariant() } |
+            ForEach-Object { ([string]$_.Trim()).ToUpperInvariant() } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
             Select-Object -Unique
         )
     }
 
-    $runnerLines = & gh api "repos/$Repository/actions/runners" --paginate --jq '.runners[] | @json'
-    if ($LASTEXITCODE -ne 0) {
-        throw "runner_inventory_query_failed: unable to query runner inventory for '$Repository'."
-    }
-    $runners = @()
-    foreach ($line in @($runnerLines)) {
-        if ([string]::IsNullOrWhiteSpace([string]$line)) { continue }
-        $runners += @(([string]$line | ConvertFrom-Json -ErrorAction Stop))
-    }
-    $eligibleOnline = @(
-        $runners | Where-Object {
-            [string]$_.status -eq 'online'
-        } | Where-Object {
-            $runnerLabels = @($_.labels | ForEach-Object { [string]$_.name })
-            @($requiredLabels | Where-Object { $runnerLabels -notcontains $_ }).Count -eq 0
-        } | Where-Object {
-            if (@($allowedMachineNames).Count -eq 0) {
-                return $true
+    $runners = Get-RunnerInventory -Repository $Repository
+    $eligibleOnline = Get-EligibleOnlineRunners -Runners $runners -RequiredLabels $requiredLabels -AllowedMachineNames $allowedMachineNames
+
+    $owner = Get-RepositoryOwner -Repository $Repository
+    $requiredActorLabels = @($requiredLabels | Where-Object { $_ -like 'cert-actor-*' } | Select-Object -Unique)
+    if (
+        @($eligibleOnline).Count -eq 0 -and
+        @($requiredActorLabels).Count -gt 0 -and
+        [string]::Equals($owner, 'LabVIEW-Community-CI-CD', [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        $requiredNonActorLabels = @($requiredLabels | Where-Object { $_ -notlike 'cert-actor-*' } | Select-Object -Unique)
+        $eligibleWithoutActor = Get-EligibleOnlineRunners -Runners $runners -RequiredLabels $requiredNonActorLabels -AllowedMachineNames $allowedMachineNames
+        $labelsAttached = $false
+
+        foreach ($runner in $eligibleWithoutActor) {
+            $runnerLabels = @($runner.labels | ForEach-Object { [string]$_.name })
+            $missingActorLabels = @($requiredActorLabels | Where-Object { $runnerLabels -notcontains $_ })
+            if (@($missingActorLabels).Count -eq 0) {
+                continue
             }
 
-            $runnerName = [string]$_.name
-            foreach ($allowedMachine in $allowedMachineNames) {
-                if ($runnerName.Equals($allowedMachine, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    return $true
-                }
-                if ($runnerName.StartsWith(($allowedMachine + '-'), [System.StringComparison]::OrdinalIgnoreCase)) {
-                    return $true
-                }
+            $labelArgs = @()
+            foreach ($label in $missingActorLabels) {
+                $labelArgs += @('-f', ("labels[]={0}" -f $label))
             }
-            return $false
+
+            Invoke-Gh -Arguments (@(
+                'api',
+                '--method',
+                'POST',
+                ("repos/$Repository/actions/runners/{0}/labels" -f [string]$runner.id)
+            ) + $labelArgs)
+            Write-Warning ("runner_actor_label_autofix: added labels '{0}' to runner '{1}' for setup '{2}'." -f ($missingActorLabels -join ','), [string]$runner.name, $SetupName)
+            $labelsAttached = $true
         }
-    )
+
+        if ($labelsAttached) {
+            Start-Sleep -Seconds 2
+            $runners = Get-RunnerInventory -Repository $Repository
+            $eligibleOnline = Get-EligibleOnlineRunners -Runners $runners -RequiredLabels $requiredLabels -AllowedMachineNames $allowedMachineNames
+        }
+    }
+
     $eligibleAvailable = @($eligibleOnline | Where-Object { -not [bool]$_.busy })
 
     if (@($eligibleOnline).Count -eq 0) {
@@ -512,3 +582,4 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
 }
 
 $report | ConvertTo-Json -Depth 8 | Write-Output
+
