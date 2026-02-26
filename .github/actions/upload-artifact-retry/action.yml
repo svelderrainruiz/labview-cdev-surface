@@ -1,0 +1,75 @@
+name: Upload Artifact Retry
+
+description: Upload an artifact with deterministic two-attempt retry and hard fail when both attempts fail.
+
+inputs:
+  artifact_name:
+    description: Artifact name.
+    required: true
+  artifact_path:
+    description: File or directory path to upload.
+    required: true
+  if_no_files_found:
+    description: Behavior when no files are found.
+    required: false
+    default: error
+  retention_days:
+    description: Optional retention days.
+    required: false
+    default: ''
+  compression_level:
+    description: Optional compression level.
+    required: false
+    default: ''
+
+outputs:
+  final_outcome:
+    description: success, retry_success, or failure.
+    value: ${{ steps.finalize.outputs.final_outcome }}
+
+runs:
+  using: composite
+  steps:
+    - id: upload_attempt_1
+      name: Upload artifact (attempt 1)
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ inputs.artifact_path }}
+        if-no-files-found: ${{ inputs.if_no_files_found }}
+        retention-days: ${{ inputs.retention_days }}
+        compression-level: ${{ inputs.compression_level }}
+
+    - id: upload_attempt_2
+      name: Upload artifact (attempt 2)
+      if: steps.upload_attempt_1.outcome == 'failure'
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ inputs.artifact_path }}
+        if-no-files-found: ${{ inputs.if_no_files_found }}
+        retention-days: ${{ inputs.retention_days }}
+        compression-level: ${{ inputs.compression_level }}
+
+    - id: finalize
+      name: Validate artifact upload attempts
+      if: always()
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $attempt1 = '${{ steps.upload_attempt_1.outcome }}'
+        $attempt2 = '${{ steps.upload_attempt_2.outcome }}'
+
+        $finalOutcome = 'failure'
+        if ($attempt1 -eq 'success') {
+          $finalOutcome = 'success'
+        } elseif ($attempt2 -eq 'success') {
+          $finalOutcome = 'retry_success'
+        }
+
+        "final_outcome=$finalOutcome" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        if ($finalOutcome -eq 'failure') {
+          throw "artifact_upload_failed_after_two_attempts: artifact '${{ inputs.artifact_name }}' could not be uploaded."
+        }
